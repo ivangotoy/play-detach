@@ -290,10 +290,11 @@ not_in_desc() {
 if [ "${PD_TEST_BUILD_MODE:-}" != 1 ] || [ ! -f /.dockerenv ]; then
     echo "skip build step (only in a container with PD_TEST_BUILD_MODE=1)"
 elif [ "$(PATH="$STUBS:$PATH" command -v setpriv)" = "$STUBS/setpriv" ]; then
-    build_case plain 'printf x >"$OUT/module.zip"; echo "upstream 1.0" >"$OUT/upstream-desc"; tr "\\0" "\\n" </proc/$$/environ >"$OUT/env"'
+    build_case plain 'printf x >"$OUT/module.zip"; echo "upstream 1.0" >"$OUT/upstream-desc"; tr "\\0" "\\n" </proc/$$/environ >"$OUT/env"; env >"$OUT/env.build"'
     check "build: exit 0" [ "$RC" = 0 ]
     [ "$RC" = 0 ] || sed 's/^/    /' "$D/log"
     check "build: the build user gets no git stall limit" not_in_env "$D" GIT_HTTP_LOW_SPEED_
+    check "build: build() gets no git stall limit" sh -c '[ -s "$1" ] && ! grep -q "^GIT_HTTP_LOW_SPEED_" "$1"' sh "$D/work/.ci-out/env.build"
     check "build: desc from upstream-desc" [ "$(cat "$D/work/.ci-out/desc")" = "upstream 1.0" ]
     # The build step's own helper names must not let an exported variable
     # of the same name (or readonly SHELLOPTS) through to the build user
