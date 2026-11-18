@@ -158,8 +158,19 @@ take_lock() {
         now=$(date +%s)
         age=$((now - $(stat -c %Y "$l" 2>/dev/null || echo "$now")))
         if [ "$age" -gt "$3" ]; then
-            rm -rf "$l"
-            continue
+            # One waiter at a time takes a stale lock over, and only after
+            # reading its age again: another waiter may have taken it over
+            # and made a new lock since the age above was read.
+            if mkdir "$l.takeover" 2>/dev/null; then
+                now=$(date +%s)
+                age=$((now - $(stat -c %Y "$l" 2>/dev/null || echo "$now")))
+                [ "$age" -le "$3" ] || rm -rf "$l"
+                rmdir "$l.takeover"
+                continue
+            fi
+            # A takeover left behind by a killed command
+            age=$((now - $(stat -c %Y "$l.takeover" 2>/dev/null || echo "$now")))
+            [ "$age" -le "$3" ] || rmdir "$l.takeover" 2>/dev/null
         fi
         [ "$tries" -gt 0 ] || return 1
         tries=$((tries - 1))

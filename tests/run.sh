@@ -128,6 +128,29 @@ case "$1" in
 esac
 EOF
 
+# rm and sort that can stop at a chosen moment, to stage a race: while
+# <flag>.wait exists they wait (at most 30 s) after making <flag>.reached.
+# rm stops only for the path in PD_TEST_RM_BLOCK (flag PD_TEST_RM_FLAG),
+# sort only when PD_TEST_SORT_FLAG is set.
+REAL_RM=$(command -v rm)
+REAL_SORT=$(command -v sort)
+hold() { printf ': >"$1.reached"; i=0; while [ -e "$1.wait" ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done\n'; }
+{
+    echo '#!/bin/sh'
+    echo 'if [ -n "$PD_TEST_RM_BLOCK" ]; then for a; do [ "$a" = "$PD_TEST_RM_BLOCK" ] && {'
+    hold | sed 's/\$1/$PD_TEST_RM_FLAG/g'
+    echo 'break; }; done; fi'
+    echo "exec $REAL_RM \"\$@\""
+} >"$STUBS/rm"
+{
+    echo '#!/bin/sh'
+    echo 'if [ -n "$PD_TEST_SORT_FLAG" ]; then'
+    hold | sed 's/\$1/$PD_TEST_SORT_FLAG/g'
+    echo 'fi'
+    echo "exec $REAL_SORT \"\$@\""
+} >"$STUBS/sort"
+chmod 755 "$STUBS/rm" "$STUBS/sort"
+
 # A fresh fake phone for one test case
 fresh() {
     C=$WORK/case
@@ -205,6 +228,35 @@ pd history 3
 check "history: last lines" [ "$(wc -l <"$C/out")" = 3 ]
 pd frobnicate
 check "unknown command: exit 1" [ $? = 1 ]
+
+# Two commands waiting on a stale list lock (left by a killed command):
+# only one may take it over. B stops right before removing the stale lock;
+# A takes the lock over and stops while holding it; then B goes on. B must
+# not remove A's lock, so neither change is lost.
+fresh
+L=$PD_DATA_DIR/list.lock
+mkdir "$L"
+touch -t 200001010000 "$L"
+: >"$C/b.wait"
+: >"$C/a.wait"
+PATH="$STUBS:$PATH" PD_BB=1 PD_TEST_RM_BLOCK=$L PD_TEST_RM_FLAG=$C/b \
+    "$SH" "$ROOT/module/play-detach" add com.example.b >"$C/b.out" 2>&1 &
+bpid=$!
+i=0
+while [ ! -e "$C/b.reached" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+PATH="$STUBS:$PATH" PD_BB=1 PD_TEST_SORT_FLAG=$C/a \
+    "$SH" "$ROOT/module/play-detach" add com.example.a >"$C/a.out" 2>&1 &
+apid=$!
+i=0
+while [ ! -e "$C/a.reached" ] && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+"$REAL_RM" -f "$C/b.wait"
+wait $bpid
+"$REAL_RM" -f "$C/a.wait"
+wait $apid
+check "stale list lock, two waiters: B stopped before the takeover" [ -e "$C/b.reached" ]
+check "stale list lock, two waiters: no change lost" list_is "com.example.a
+com.example.b"
+check "stale list lock, two waiters: no lock left" sh -c '[ ! -e "$1" ] && [ ! -e "$1.takeover" ]' sh "$L"
 
 # import / backup / restore
 fresh
