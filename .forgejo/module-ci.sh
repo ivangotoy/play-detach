@@ -90,7 +90,9 @@ if [ "$MODE" = build ]; then
     # never as argv (an `env -i NAME=value` argv is readable in /proc by other local users): unset
     # every other exported variable, export these with the builtin, and let env(1) drop by name
     # whatever bash cannot unset (readonly variables, names that are not identifiers, exported functions).
-    (   keep=" PATH JAVA_HOME JAVA_HOME_21 JAVA_HOME_26 SIGN_KEYSTORE_B64 SIGN_KEY_ALIAS SIGN_STORE_PASSWORD SIGN_KEY_PASSWORD SERVER_URL REPOSITORY BASE_SHA "
+    (   # the helper names below must not be exported variables (they would be unset by the loop)
+        unset keep drop v e
+        keep=" PATH JAVA_HOME JAVA_HOME_21 JAVA_HOME_26 SIGN_KEYSTORE_B64 SIGN_KEY_ALIAS SIGN_STORE_PASSWORD SIGN_KEY_PASSWORD SERVER_URL REPOSITORY BASE_SHA "
         drop=()
         for v in $(compgen -e); do
             case "$keep" in *" $v "*) ;; *) unset "$v" 2>/dev/null || drop+=(-u "$v") ;; esac

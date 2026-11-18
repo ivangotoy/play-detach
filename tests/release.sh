@@ -80,7 +80,7 @@ chmod 755 "$STUBS/curl"
 REAL_GIT=$(command -v git)
 cat >"$STUBS/git" <<EOF
 #!/usr/bin/env bash
-if [ -n "\$CURL_STATE" ]; then
+if [ -n "\${CURL_STATE:-}" ]; then
     printf '%s\\n' "\$*" >>"\$CURL_STATE/git-argv.log"
     envauth=no
     for ((i = 0; i < \${GIT_CONFIG_COUNT:-0}; i++)); do
@@ -257,14 +257,16 @@ EOF2
 printf '#!/bin/sh\nexit 0\n' >"$STUBS/chown"
 chmod 755 "$STUBS/setpriv" "$STUBS/chown"
 
-# build_case <name> <body of build()>: V in the body is a folder outside the
-# build with a file "file" (content: precious) and a file "secret"
+# build_case <name> <body of build()> [NAME=value...]: V in the body is a
+# folder outside the build with a file "file" (content: precious) and a file
+# "secret"; NAME=value are extra variables in the environment of the build step
 build_case() {
-    local d="$W/b-$1"
+    local d="$W/b-$1" body=$2
+    shift 2
     rm -rf "$d"
     mkdir -p "$d/work/.forgejo" "$d/v"
     cp "$ROOT/.forgejo/module-ci.sh" "$d/work/.forgejo/module-ci.sh"
-    printf 'V=%s\nbuild() { %s; }\n' "$d/v" "$2" >"$d/work/.forgejo/module-ci.conf"
+    printf 'V=%s\nbuild() { %s; }\n' "$d/v" "$body" >"$d/work/.forgejo/module-ci.conf"
     echo precious >"$d/v/file"
     echo "secret line" >"$d/v/secret"
     git -C "$d/work" init -q -b main
@@ -274,7 +276,7 @@ build_case() {
         cd "$d" &&
             PATH="$STUBS:$PATH" SERVER_URL=https://forge.example.invalid REPOSITORY=$REPOSITORY \
                 BASE_SHA="$(git -C "$d/work" rev-parse HEAD)" \
-                timeout 120 bash "$d/work/.forgejo/module-ci.sh" build "$d/work"
+                env "$@" timeout 120 bash "$d/work/.forgejo/module-ci.sh" build "$d/work"
     ) >"$d/log" 2>&1
     RC=$?
     D=$d
@@ -293,6 +295,13 @@ elif [ "$(PATH="$STUBS:$PATH" command -v setpriv)" = "$STUBS/setpriv" ]; then
     [ "$RC" = 0 ] || sed 's/^/    /' "$D/log"
     check "build: the build user gets no git stall limit" not_in_env "$D" GIT_HTTP_LOW_SPEED_
     check "build: desc from upstream-desc" [ "$(cat "$D/work/.ci-out/desc")" = "upstream 1.0" ]
+    # The build step's own helper names must not let an exported variable
+    # of the same name (or readonly SHELLOPTS) through to the build user
+    build_case names 'printf x >"$OUT/module.zip"; tr "\\0" "\\n" </proc/$$/environ >"$OUT/env"' \
+        keep=x drop=x v=x e=x SHELLOPTS=braceexpand:hashall:interactive-comments
+    check "build with exported keep/drop/v/e: exit 0" [ "$RC" = 0 ]
+    check "build with exported keep/drop/v/e: SHELLOPTS not passed" not_in_env "$D" SHELLOPTS=
+    check "build with exported keep/drop/v/e: none of them passed" sh -c '! grep -qE "^(keep|drop|v|e)=" "$1"' sh "$D/work/.ci-out/env"
     build_case desclink 'printf x >"$OUT/module.zip"; echo planted >"$OUT/upstream-desc"; ln -s "$V/file" "$OUT/desc"'
     check "build, desc planted as a link: file behind it untouched" [ "$(cat "$D/v/file")" = precious ]
     check "build, desc planted as a link: desc written as a file" \
