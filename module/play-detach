@@ -190,6 +190,9 @@ log_changes() {
 trim_history() {
     [ -f "$HISTORY" ] || return 0
     if [ "$(wc -l <"$HISTORY")" -gt 200 ]; then
+        # A change appends to the history under the list lock: when the list
+        # is busy, cut it at the next scan instead of losing that line
+        take_lock "$DATA_DIR/list.lock" 0 30 || return 0
         tail -n 200 "$HISTORY" >"$HISTORY.tmp.$$" && mv -f "$HISTORY.tmp.$$" "$HISTORY"
     fi
 }

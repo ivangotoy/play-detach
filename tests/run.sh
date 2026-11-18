@@ -246,6 +246,26 @@ check "scan: new sideloaded app detached" list_is "com.example.side"
 check "scan: auto history" grep -q ' detach auto com.example.side$' "$PD_DATA_DIR/history.log"
 check "scan: Play Store version saved" grep -q '^code=84021 ' "$PD_DATA_DIR/store"
 check "scan: notification posted" grep -q '^su 2000 -c cmd notification post' "$WORK/calls.log"
+# history.log is cut to 200 lines by scan; list changes append to it under
+# the list lock, so scan must not cut it while another command holds the lock
+i=0
+while [ $i -lt 250 ]; do
+    echo "1700000000 detach user com.example.h$i"
+    i=$((i + 1))
+done >"$PD_DATA_DIR/history.log"
+mkdir "$PD_DATA_DIR/list.lock"
+pd scan
+check "scan with the list busy: exit 0" [ $? = 0 ]
+check "scan with the list busy: history not cut" [ "$(wc -l <"$PD_DATA_DIR/history.log")" = 250 ]
+check "scan with the list busy: lock left alone" [ -d "$PD_DATA_DIR/list.lock" ]
+rmdir "$PD_DATA_DIR/list.lock"
+printf 'package:com.example.old  installer=com.android.vending\npackage:com.example.side  installer=com.google.android.packageinstaller\npackage:com.example.store  installer=com.android.vending\npackage:com.example.side2  installer=com.google.android.packageinstaller\n' >"$PD_TEST_PM"
+pd scan
+check "scan detaching with a long history: exit 0" [ $? = 0 ]
+check "scan detaching with a long history: detached" grep -qx com.example.side2 "$PD_DATA_DIR/detach.list"
+check "scan detaching with a long history: lock released" [ ! -d "$PD_DATA_DIR/list.lock" ]
+pd scan
+check "scan: history cut to 200 lines" [ "$(wc -l <"$PD_DATA_DIR/history.log")" = 200 ]
 pd autoskip add com.example.inst
 check "autoskip add" [ "$(cat "$C/out")" = com.example.inst ]
 pd autoskip remove com.example.inst
