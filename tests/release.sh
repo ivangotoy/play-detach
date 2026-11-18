@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Offline test of the release step of .forgejo/module-ci.sh, called by
+# Offline test of the build and release steps of .forgejo/module-ci.sh, called by
 # tests/run.sh: bash tests/release.sh <repo root> <scratch dir> <stub dir>
 #
 # The "forge" is a local bare repo (SERVER_URL is a folder, git uses the file
@@ -232,3 +232,64 @@ check "release: no retry on POST, PATCH or DELETE" no_retry_on_changes "$W/token
 check "failed release: no retry on the draft DELETE" no_retry_on_changes "$W/tokenfail"
 check "failed release: every curl call has time limits" all_calls_time_limited "$W/tokenfail"
 check "release: API reads are still retried" reads_retried "$W/token"
+
+# Build step, offline. setpriv and chown are stubs: the build runs as the
+# tester (no uid change), and the stub never runs "kill -9 -1". build() in
+# module-ci.conf plays the untrusted build: it leaves files in $OUT the way
+# build code could. After the build root must follow no link in $OUT.
+cat >"$STUBS/setpriv" <<'EOF2'
+#!/bin/sh
+# setpriv stub: drops the options and runs the command as is, except kill
+while [ $# -gt 0 ]; do case "$1" in --*) shift ;; *) break ;; esac; done
+[ "$1" = kill ] && exit 0
+exec "$@"
+EOF2
+printf '#!/bin/sh\nexit 0\n' >"$STUBS/chown"
+chmod 755 "$STUBS/setpriv" "$STUBS/chown"
+
+# build_case <name> <body of build()>: V in the body is a folder outside the
+# build with a file "file" (content: precious) and a file "secret"
+build_case() {
+    local d="$W/b-$1"
+    rm -rf "$d"
+    mkdir -p "$d/work/.forgejo" "$d/v"
+    cp "$ROOT/.forgejo/module-ci.sh" "$d/work/.forgejo/module-ci.sh"
+    printf 'V=%s\nbuild() { %s; }\n' "$d/v" "$2" >"$d/work/.forgejo/module-ci.conf"
+    echo precious >"$d/v/file"
+    echo "secret line" >"$d/v/secret"
+    git -C "$d/work" init -q -b main
+    git -C "$d/work" add -A
+    git -C "$d/work" commit -qm seed
+    (
+        cd "$d" &&
+            PATH="$STUBS:$PATH" SERVER_URL=https://forge.example.invalid REPOSITORY=$REPOSITORY \
+                BASE_SHA="$(git -C "$d/work" rev-parse HEAD)" \
+                timeout 120 bash "$d/work/.forgejo/module-ci.sh" build "$d/work"
+    ) >"$d/log" 2>&1
+    RC=$?
+    D=$d
+}
+not_in_desc() {
+    ! grep -qs "secret line" "$1/work/.ci-out/desc" "$1/work/.ci-out.old/desc"
+}
+if [ "$(PATH="$STUBS:$PATH" command -v setpriv)" = "$STUBS/setpriv" ]; then
+    build_case plain 'printf x >"$OUT/module.zip"; echo "upstream 1.0" >"$OUT/upstream-desc"'
+    check "build: exit 0" [ "$RC" = 0 ]
+    [ "$RC" = 0 ] || sed 's/^/    /' "$D/log"
+    check "build: desc from upstream-desc" [ "$(cat "$D/work/.ci-out/desc")" = "upstream 1.0" ]
+    build_case desclink 'printf x >"$OUT/module.zip"; echo planted >"$OUT/upstream-desc"; ln -s "$V/file" "$OUT/desc"'
+    check "build, desc planted as a link: file behind it untouched" [ "$(cat "$D/v/file")" = precious ]
+    check "build, desc planted as a link: desc written as a file" \
+        sh -c '[ -f "$1" ] && [ ! -L "$1" ] && [ "$(cat "$1")" = planted ]' sh "$D/work/.ci-out/desc"
+    build_case uplink 'printf x >"$OUT/module.zip"; ln -s "$V/secret" "$OUT/upstream-desc"'
+    check "build, upstream-desc planted as a link: refused" [ "$RC" != 0 ]
+    check "build, upstream-desc planted as a link: file behind it not copied" not_in_desc "$D"
+    build_case uphard 'printf x >"$OUT/module.zip"; ln "$V/secret" "$OUT/upstream-desc"'
+    check "build, upstream-desc planted as a hard link: refused" [ "$RC" != 0 ]
+    check "build, upstream-desc planted as a hard link: file not copied" not_in_desc "$D"
+    build_case outlink 'printf x >"$V/module.zip"; mv "$OUT" "$OUT.old"; ln -s "$V" "$OUT"'
+    check "build, output folder replaced by a link: refused" [ "$RC" != 0 ]
+    check "build, output folder replaced by a link: nothing written behind it" [ ! -e "$D/v/desc" ]
+else
+    no "build: setpriv stub not first on PATH"
+fi

@@ -105,8 +105,16 @@ if [ "$MODE" = build ]; then
             bash "$WORK/.forgejo/module-ci.sh" build-user "$WORK"
     ) || die "build failed"
     setpriv --reuid="$BUILD_UID" --regid="$BUILD_UID" --clear-groups kill -9 -1 2>/dev/null || true
+    # $OUT belongs to the build user: root follows no link in it (a planted link would make
+    # root read or overwrite any file) and reads only a file with a single name
+    [ -d "$OUT" ] && [ ! -L "$OUT" ] || die "$OUT is not a directory"
     [ -f "$OUT/module.zip" ] || die "build left no $OUT/module.zip"
-    [ -f "$OUT/upstream-desc" ] && DESC="$(head -n1 "$OUT/upstream-desc")"
+    if [ -e "$OUT/upstream-desc" ] || [ -L "$OUT/upstream-desc" ]; then
+        [ -f "$OUT/upstream-desc" ] && [ ! -L "$OUT/upstream-desc" ] && [ "$(stat -c %h "$OUT/upstream-desc")" = 1 ] \
+            || die "$OUT/upstream-desc is not a regular file"
+        DESC="$(head -n1 "$OUT/upstream-desc")"
+    fi
+    rm -f "$OUT/desc"
     printf '%s\n' "$DESC" > "$OUT/desc"
     log "build done"
     exit 0
