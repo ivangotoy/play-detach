@@ -1,0 +1,24 @@
+# Builds the module from main merged with upstream, releases it on this forge and
+# points the module's updateJson at this repo. Logic: .forgejo/module-ci.sh,
+# per-repo settings: .forgejo/module-ci.conf.
+name: module-release
+
+on:
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: kernelsu-ci
+    timeout-minutes: 170
+    steps:
+      - name: Build and release
+        env:
+          FORGEJO_TOKEN: ${{ secrets.MODULE_RELEASE_TOKEN }}
+          SERVER_URL: ${{ github.server_url }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          set -eu
+          git -c "http.extraHeader=Authorization: token $FORGEJO_TOKEN" clone -q --branch main "$SERVER_URL/$REPOSITORY.git" src
+          cd src
+          bash .forgejo/module-ci.sh
