@@ -226,31 +226,32 @@ backup_dir() {
 }
 
 # Saves the current list to a file. Prints an error and returns 1 on failure.
+# Uses its own name for the file ($bfile): callers keep their $file.
 save_backup() {
-    file=$1
-    dir=$(dirname "$file")
+    bfile=$1
+    dir=$(dirname "$bfile")
     [ -d "$dir" ] || {
         echo "Error: folder not found: $dir" >&2
         return 1
     }
     # A folder as the target would get the file moved into it and mode 664
-    [ ! -d "$file" ] || {
-        echo "Error: $file is a folder, give a file name" >&2
+    [ ! -d "$bfile" ] || {
+        echo "Error: $bfile is a folder, give a file name" >&2
         return 1
     }
     count=$(read_list | wc -l)
-    tmp="$file.tmp.$$"
+    tmp="$bfile.tmp.$$"
     {
         echo "# Play Detach backup, $(date '+%Y-%m-%d %H:%M'), $count package(s)"
         read_list
-    } >"$tmp" 2>/dev/null && mv -f "$tmp" "$file" || {
+    } >"$tmp" 2>/dev/null && mv -f "$tmp" "$bfile" || {
         rm -f "$tmp"
-        echo "Error: cannot write $file" >&2
+        echo "Error: cannot write $bfile" >&2
         return 1
     }
     # Same owner as the folder, so file managers and apps can read it
-    chown "$(stat -c %u:%g "$dir")" "$file" 2>/dev/null
-    chmod 664 "$file"
+    chown "$(stat -c %u:%g "$dir")" "$bfile" 2>/dev/null
+    chmod 664 "$bfile"
 }
 
 # Keeps a copy of the list after every change. An empty list never replaces

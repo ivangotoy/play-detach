@@ -207,6 +207,9 @@ pd restore "$PD_STORAGE/Play-Detach/play-detach-backup.txt"
 check "restore: exit 0" [ $? = 0 ]
 check "restore: list back" list_is "com.example.one
 com.example.two"
+pd backup "$PD_STORAGE/Download/mine.txt"
+pd restore "$PD_STORAGE/Download/mine.txt"
+check "restore: message names the restored file" out_has "from $PD_STORAGE/Download/mine.txt"
 pd restore "$C/missing.txt"
 check "restore: missing file exit 1" [ $? = 1 ]
 mkdir "$PD_STORAGE/Folder"
