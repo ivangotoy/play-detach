@@ -264,6 +264,7 @@ pd scan
 check "scan detaching with a long history: exit 0" [ $? = 0 ]
 check "scan detaching with a long history: detached" grep -qx com.example.side2 "$PD_DATA_DIR/detach.list"
 check "scan detaching with a long history: lock released" [ ! -d "$PD_DATA_DIR/list.lock" ]
+check "scan detaching with a long history: history cut in the same scan" [ "$(wc -l <"$PD_DATA_DIR/history.log")" = 200 ]
 pd scan
 check "scan: history cut to 200 lines" [ "$(wc -l <"$PD_DATA_DIR/history.log")" = 200 ]
 pd autoskip add com.example.inst
