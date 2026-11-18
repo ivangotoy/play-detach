@@ -60,8 +60,9 @@ esac
 EOF
 chmod 755 "$STUBS/curl"
 
-# release_case <name> <built version>: a forge repo with a fork-owned
-# module.prop (SYNC_ROOT_PROP), a built zip with that version, one release run
+# release_case <name> <built version> [side]: a forge repo with a fork-owned
+# module.prop (SYNC_ROOT_PROP), a built zip with that version, one release
+# run. With "side" the dispatched commit is on a branch other than main.
 release_case() {
     local built=$2 d="$W/$1"
     rm -rf "$d"
@@ -73,6 +74,13 @@ release_case() {
     git -C "$d/seed" add -A
     git -C "$d/seed" commit -qm seed
     git -C "$d/seed" push -q "$d/forge/$REPOSITORY.git" main
+    if [ "$3" = side ]; then
+        git -C "$d/seed" checkout -q -b side
+        echo side >"$d/seed/side.txt"
+        git -C "$d/seed" add side.txt
+        git -C "$d/seed" commit -qm side
+        git -C "$d/seed" push -q "$d/forge/$REPOSITORY.git" side
+    fi
     BASE=$(git -C "$d/seed" rev-parse HEAD)
     echo "$BASE" >"$d/state/base"
     printf '%s\n\n' "$BASE" >"$d/src/.ci-out/src"
@@ -113,3 +121,21 @@ name=Mod
 version=v1.0-ci3
 versionCode=5
 updateJson=$UPDATE_URL" ]
+
+# The built version comes from the build output: it must reach the fork's
+# module.prop as text, never as part of the sed program
+synced() {
+    [ "$MAIN_PROP" = "id=mod
+name=Mod
+version=$1
+versionCode=5
+updateJson=$UPDATE_URL" ]
+}
+release_case inject "\$(touch $W/pwned)|e;#"
+check "release, version with a sed command: exit 0" [ "$RC" = 0 ]
+check "release, version with a sed command: nothing run" [ ! -e "$W/pwned" ]
+check "release, version with a sed command: module.prop synced as text" synced "\$(touch $W/pwned)|e;#-ci3"
+release_case special 'v1.0&b\\c|d'
+check "release, version with & \\ |: exit 0" [ "$RC" = 0 ]
+check "release, version with & \\ |: module.prop synced as text" synced 'v1.0&b\\c|d-ci3'
+
