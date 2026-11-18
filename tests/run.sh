@@ -164,7 +164,19 @@ EOF
     echo 'fi'
     echo "exec $REAL_SORT \"\$@\""
 } >"$STUBS/sort"
-chmod 755 "$STUBS/rm" "$STUBS/sort" "$STUBS/chmod"
+# mv that, with PD_TEST_MV_LOG set, logs the full path of its source
+REAL_MV=$(command -v mv)
+cat >"$STUBS/mv" <<EOF
+#!/bin/sh
+if [ -n "\$PD_TEST_MV_LOG" ]; then
+    src= prev=
+    for a; do src=\$prev; prev=\$a; done
+    case "\$src" in /*) ;; *) src="\$(pwd -P)/\$src" ;; esac
+    echo "\$src" >>"\$PD_TEST_MV_LOG"
+fi
+exec $REAL_MV "\$@"
+EOF
+chmod 755 "$STUBS/rm" "$STUBS/sort" "$STUBS/chmod" "$STUBS/mv"
 
 # A fresh fake phone for one test case
 fresh() {
@@ -543,6 +555,18 @@ mkdir -p "$C/termux/bin"
 echo old >"$C/termux/bin/play-detach"
 install_module
 check "install: old Termux command replaced" grep -qx 'exec su -c /data/adb/modules/play-detach/play-detach "$@"' "$C/termux/bin/play-detach"
+# The command is made inside the Termux folder (so it gets that folder's
+# SELinux label and encryption policy on a phone) and only renamed there
+fresh
+mkdir -p "$C/termux/bin"
+(
+    PD_TEST_MV_LOG=$C/mv.log
+    export PD_TEST_MV_LOG
+    install_module
+)
+check "install: Termux command made inside the Termux folder" \
+    sh -c 'tail -n 1 "$1" | grep -q "^$2/"' sh "$C/mv.log" "$(cd -P "$C/termux/bin" && pwd -P)"
+check "install: no staging folder left" [ "$(ls -A "$C/termux/bin")" = play-detach ]
 # A link among the Termux folders (here usr) must not move the command
 # into the folder it points to
 fresh

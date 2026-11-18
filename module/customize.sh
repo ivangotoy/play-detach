@@ -148,23 +148,34 @@ fi
 
 if [ -d "$TERMUX_BIN" ]; then
     owner=$(stat -c %u:%g "$TERMUX_BIN")
-    # Termux owns this folder: root writes nothing in it and follows no link
-    # there. The command is made in the root-only data folder with its owner
-    # and mode, then renamed in from inside the folder (mv -T replaces a link
-    # and never follows it). A link among the last three folders
-    # (files/usr/bin) would put it elsewhere: then it is not installed.
+    # Termux owns this folder: root follows no link there and touches only
+    # names in a folder of its own. The command is made in a root-only
+    # staging folder inside it (so it gets the folder's SELinux label and
+    # encryption policy), then renamed in (mv -T replaces a link and never
+    # follows it). A link among the last three folders (files/usr/bin)
+    # would put it elsewhere: then it is not installed.
     top=${TERMUX_BIN%/*/*/*}
-    new="$DATA_DIR/termux-command.tmp.$$"
-    rm -f "$new"
-    cat >"$new" <<'EOF' &&
+    (
+        cd -P "$TERMUX_BIN" && [ "$(pwd -P)" = "$(cd -P "$top" && pwd -P)/${TERMUX_BIN#"$top"/}" ] || exit 1
+        stage=.play-detach-install.$$
+        umask 077
+        mkdir "$stage" || exit 1
+        rc=1
+        if cd "$stage" && [ -O . ] && [ "$(stat -c %a .)" = 700 ]; then
+            cat >play-detach <<'EOF' &&
 #!/data/data/com.termux/files/usr/bin/sh
 exec su -c /data/adb/modules/play-detach/play-detach "$@"
 EOF
-    chown "$owner" "$new" && chmod 755 "$new" &&
-    (cd -P "$TERMUX_BIN" && [ "$(pwd -P)" = "$(cd -P "$top" && pwd -P)/${TERMUX_BIN#"$top"/}" ] &&
-        rm -f play-detach && mv -T -f "$new" play-detach) &&
+                chown "$owner" play-detach && chmod 755 play-detach &&
+                rm -f ../play-detach && mv -T -f play-detach ../play-detach
+            rc=$?
+            rm -f play-detach
+            cd -P ..
+        fi
+        rmdir "$stage" 2>/dev/null
+        exit $rc
+    ) &&
     ui_print "$(m "- Termux command installed: play-detach" "- В Termux установлена команда play-detach")"
-    rm -f "$new"
 fi
 
 ui_print "$(m "- Manage apps from the module WebUI or the play-detach command" "- Управляйте приложениями через WebUI модуля или команду play-detach")"
