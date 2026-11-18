@@ -148,12 +148,15 @@ fi
 
 if [ -d "$TERMUX_BIN" ]; then
     owner=$(stat -c %u:%g "$TERMUX_BIN")
-    cat >"$TERMUX_BIN/play-detach" <<'EOF'
+    # Termux owns this folder: whatever is there (a link too) is removed, not
+    # followed, and the command is only written as a new file (noclobber)
+    rm -f "$TERMUX_BIN/play-detach"
+    (set -C && cat >"$TERMUX_BIN/play-detach") <<'EOF' &&
 #!/data/data/com.termux/files/usr/bin/sh
 exec su -c /data/adb/modules/play-detach/play-detach "$@"
 EOF
-    chown "$owner" "$TERMUX_BIN/play-detach"
-    chmod 755 "$TERMUX_BIN/play-detach"
+    chown -h "$owner" "$TERMUX_BIN/play-detach" &&
+    chmod 755 "$TERMUX_BIN/play-detach" &&
     ui_print "$(m "- Termux command installed: play-detach" "- В Termux установлена команда play-detach")"
 fi
 

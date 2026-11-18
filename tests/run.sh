@@ -316,6 +316,28 @@ check "install: detach.txt imported" list_is "com.example.app"
 check "install: detach.txt removed" [ ! -e "$C/mp/detach.txt" ]
 check "install: Termux command" grep -qx 'exec su -c /data/adb/modules/play-detach/play-detach "$@"' "$C/termux/bin/play-detach"
 check "install: Termux command mode 755" [ "$(stat -c %a "$C/termux/bin/play-detach")" = 755 ]
+# The Termux folder belongs to Termux: a link planted as play-detach must not
+# make the root installer write, chown or chmod the file it points to
+fresh
+mkdir -p "$C/termux/bin"
+echo precious >"$C/victim"
+chmod 600 "$C/victim"
+ln -s "$C/victim" "$C/termux/bin/play-detach"
+install_module
+check "install: file behind a Termux link untouched" [ "$(cat "$C/victim")" = precious ]
+check "install: file behind a Termux link keeps its mode" [ "$(stat -c %a "$C/victim")" = 600 ]
+check "install: Termux link replaced by the command" \
+    sh -c '[ -f "$1" ] && [ ! -L "$1" ] && grep -q "^exec su -c" "$1"' sh "$C/termux/bin/play-detach"
+fresh
+mkdir -p "$C/termux/bin"
+ln -s "$C/nowhere" "$C/termux/bin/play-detach"
+install_module
+check "install: dangling Termux link not followed" [ ! -e "$C/nowhere" ]
+fresh
+mkdir -p "$C/termux/bin"
+echo old >"$C/termux/bin/play-detach"
+install_module
+check "install: old Termux command replaced" grep -qx 'exec su -c /data/adb/modules/play-detach/play-detach "$@"' "$C/termux/bin/play-detach"
 fresh
 install_module x86_64
 check "install: abort on non-arm64" grep -q '^ABORT: ! Only arm64' "$C/install.log"
