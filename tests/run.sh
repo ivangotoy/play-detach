@@ -147,6 +147,18 @@ hold() { printf ': >"$1.reached"; i=0; while [ -e "$1.wait" ] && [ $i -lt 300 ];
     echo 'fi; done; fi'
     echo "exec $REAL_RM \"\$@\""
 } >"$STUBS/rm"
+# mkdir that, once the installer's staging folder is made, moves it to
+# PD_TEST_MKDIR_TO and leaves a link to it, as a racing owner of the folder could
+REAL_MKDIR=$(command -v mkdir)
+cat >"$STUBS/mkdir" <<EOF
+#!/bin/sh
+if [ -n "\$PD_TEST_MKDIR_TO" ]; then
+    for a; do case "\${a##*/}" in .play-detach-install.*)
+        $REAL_MKDIR "\$@" && mv "\$a" "\$PD_TEST_MKDIR_TO" && ln -s "\$PD_TEST_MKDIR_TO" "\$a"; exit; esac; done
+fi
+exec $REAL_MKDIR "\$@"
+EOF
+chmod 755 "$STUBS/mkdir"
 # chmod that swaps the file PD_TEST_CHMOD_SWAP for a link to
 # PD_TEST_CHMOD_TO right before changing its mode
 REAL_CHMOD=$(command -v chmod)
@@ -586,6 +598,16 @@ echo precious >"$C/victim"
     install_module
 )
 check "install: command swapped for a link before chmod: file behind it keeps its mode" [ "$(stat -c %a "$C/victim")" = 600 ]
+# Termux moves the new staging folder elsewhere and leaves a link to it:
+# the command must not be put next to the moved folder
+fresh
+mkdir -p "$C/termux/bin" "$C/decoy"
+(
+    PD_TEST_MKDIR_TO=$C/decoy/stage
+    export PD_TEST_MKDIR_TO
+    install_module
+)
+check "install: staging folder swapped for a link: nothing written beside it" [ ! -e "$C/decoy/play-detach" ]
 # Termux plants a link to a pipe again right after the old command is
 # removed: root must not write through it
 fresh

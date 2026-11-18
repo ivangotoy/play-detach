@@ -157,11 +157,12 @@ if [ -d "$TERMUX_BIN" ]; then
     top=${TERMUX_BIN%/*/*/*}
     (
         cd -P "$TERMUX_BIN" && [ "$(pwd -P)" = "$(cd -P "$top" && pwd -P)/${TERMUX_BIN#"$top"/}" ] || exit 1
+        bin=$(pwd -P)
         stage=.play-detach-install.$$
         umask 077
         mkdir "$stage" || exit 1
         rc=1
-        if cd "$stage" && [ -O . ] && [ "$(stat -c %a .)" = 700 ]; then
+        if cd -P "$stage" && [ "$(pwd -P)" = "$bin/$stage" ] && [ -O . ] && [ "$(stat -c %a .)" = 700 ]; then
             cat >play-detach <<'EOF' &&
 #!/data/data/com.termux/files/usr/bin/sh
 exec su -c /data/adb/modules/play-detach/play-detach "$@"
