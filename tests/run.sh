@@ -360,6 +360,30 @@ else
     skipped "service: watcher end (no pgrep)"
 fi
 
+# An event pipe that cannot be opened (here: mode 000, as a non-root user)
+# must make the watcher fall back to the 3 s check, not end it
+if [ "$(id -u)" != 0 ] && have pgrep; then
+    fresh
+    MOD=$C/mod
+    mkdir -p "$MOD"
+    cp "$ROOT/module/service.sh" "$MOD/service.sh"
+    printf '#!/bin/sh\necho "$1" >>"%s"\n' "$C/cli.log" >"$MOD/play-detach"
+    chmod 755 "$MOD/play-detach"
+    mkfifo -m 000 "$PD_DATA_DIR/events.fifo"
+    PATH="$STUBS:$PATH" PD_TEST_MOD=$MOD "$SH" "$MOD/service.sh" </dev/null >/dev/null 2>&1
+    sleep 4
+    check "service: unopenable event pipe, watcher still runs" pgrep -f "$MOD/service.sh"
+    rm -rf "$MOD"
+    i=0
+    while [ $i -lt 15 ] && pgrep -f "$MOD/service.sh" >/dev/null; do
+        sleep 1
+        i=$((i + 1))
+    done
+    pkill -f "$MOD/service.sh" 2>/dev/null
+else
+    skipped "service: unopenable event pipe (needs a non-root user and pgrep)"
+fi
+
 # The watcher with an inotifyd that exits at once (started at the top):
 # within 75 s of its start it must have scanned, and stopped starting
 # inotifyd after 3 tries. Without /data/app here, the scan of the 3 s check

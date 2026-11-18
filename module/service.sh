@@ -64,7 +64,8 @@ watch_events() {
         mkfifo -m 600 "$FIFO" 2>/dev/null || return 2
     fi
     # Read-write open: never blocks and never sees end of file
-    exec 3<>"$FIFO" || return 2
+    # (command: a failed redirection returns here instead of ending the shell)
+    command exec 3<>"$FIFO" || return 2
     # shellcheck disable=SC2086 # $INOTIFYD is "<binary> inotifyd"
     $INOTIFYD - /data/app:nmdy "$DATA:y" >&3 2>/dev/null &
     ipid=$!
