@@ -151,6 +151,9 @@ not() { ! "$@"; }
 # ---------------------------------------------------------------------------
 
 fresh
+pd history
+check "history: no history yet is not an error" [ $? = 0 ]
+check "history: no history yet prints nothing" [ ! -s "$C/out" ]
 pd add com.example.two com.example.app
 check "add: exit 0" [ $? = 0 ]
 check "add: list sorted" list_is "com.example.app

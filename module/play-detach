@@ -726,7 +726,7 @@ case "$cmd" in
     history)
         n=${1:-20}
         case "$n" in '' | *[!0-9]*) die "use: history [count]" ;; esac
-        [ -f "$HISTORY" ] && tail -n "$n" "$HISTORY"
+        [ ! -f "$HISTORY" ] || tail -n "$n" "$HISTORY"
         ;;
     autoskip)
         case "$1" in
