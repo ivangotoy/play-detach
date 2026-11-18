@@ -110,6 +110,11 @@ stub busybox <<'EOF'
 case "$1" in
     --list) echo inotifyd ;;
     inotifyd)
+        # PD_TEST_INOTIFYD_DIES: an inotifyd that exits at once (no events)
+        if [ -n "$PD_TEST_INOTIFYD_DIES" ]; then
+            echo start >>"$PD_TEST_INOTIFYD_DIES"
+            exit 1
+        fi
         d=${4%:*}
         printf 'n\t/data/app\tcom.example.app\n'
         i=0
@@ -145,6 +150,18 @@ list_is() {
 out_has() { grep -qF -- "$1" "$C/out"; }
 err_has() { grep -qF -- "$1" "$C/err"; }
 not() { ! "$@"; }
+
+# service.sh with an inotifyd that exits at once: the watcher must still
+# scan (it falls back to the 3 s check). Started here and checked at the end,
+# because its first wait is the 30 s boot delay.
+DEAD=$WORK/dead
+mkdir -p "$DEAD/mod" "$DEAD/data"
+cp "$ROOT/module/service.sh" "$DEAD/mod/service.sh"
+printf '#!/bin/sh\necho "$1" >>"%s"\n' "$DEAD/cli.log" >"$DEAD/mod/play-detach"
+chmod 755 "$DEAD/mod/play-detach"
+PATH="$STUBS:$PATH" PD_DATA_DIR=$DEAD/data PD_TEST_INOTIFYD_DIES=$DEAD/starts PD_TEST_MOD=$DEAD/mod \
+    "$SH" "$DEAD/mod/service.sh" </dev/null >/dev/null 2>&1
+DEAD_START=$(date +%s)
 
 # ---------------------------------------------------------------------------
 # play-detach command
@@ -304,6 +321,33 @@ if have pgrep; then
     pkill -f "$MOD/service.sh" 2>/dev/null
 else
     skipped "service: watcher end (no pgrep)"
+fi
+
+# The watcher with an inotifyd that exits at once (started at the top):
+# within 75 s of its start it must have scanned, and stopped starting
+# inotifyd after 3 tries. Without /data/app here, the scan of the 3 s check
+# is the one for 10 minutes since the last scan, which needs an uptime of
+# 10 minutes.
+read -r up _ </proc/uptime
+if [ "${up%.*}" -ge 600 ]; then
+    while [ $(($(date +%s) - DEAD_START)) -lt 75 ] && ! grep -qx scan "$DEAD/cli.log" 2>/dev/null; do
+        sleep 1
+    done
+    echo "     dying inotifyd: $(cat "$DEAD/cli.log" 2>/dev/null | grep -cx scan) scan(s), $(wc -l <"$DEAD/starts") start(s) in $(($(date +%s) - DEAD_START)) s"
+    check "service: inotifyd that exits at once still gets scans" grep -qx scan "$DEAD/cli.log"
+    check "service: inotifyd that exits at once is started 3 times only" [ "$(wc -l <"$DEAD/starts")" = 3 ]
+else
+    skipped "service: dying inotifyd (uptime under 10 minutes)"
+fi
+rm -rf "$DEAD/mod"
+if have pgrep; then
+    i=0
+    while [ $i -lt 15 ] && pgrep -f "$DEAD/mod/service.sh" >/dev/null; do
+        sleep 1
+        i=$((i + 1))
+    done
+    check "service: watcher with a dying inotifyd ends without the module" not pgrep -f "$DEAD/mod/service.sh"
+    pkill -f "$DEAD/mod/service.sh" 2>/dev/null
 fi
 
 # ---------------------------------------------------------------------------
