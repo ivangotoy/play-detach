@@ -139,3 +139,8 @@ release_case special 'v1.0&b\\c|d'
 check "release, version with & \\ |: exit 0" [ "$RC" = 0 ]
 check "release, version with & \\ |: module.prop synced as text" synced 'v1.0&b\\c|d-ci3'
 
+# The release must be built from a commit on main
+release_case side v1.0 side
+check "release from a commit not on main: refused" [ "$RC" != 0 ]
+check "release from a commit not on main: nothing published" [ ! -f "$D/state/published" ]
+check "release from a commit not on main: no draft left" sh -c '[ ! -f "$1/state/asset.zip" ] || [ -f "$1/state/deleted" ]' sh "$D"

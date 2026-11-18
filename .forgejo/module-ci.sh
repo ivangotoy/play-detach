@@ -109,7 +109,7 @@ REL="$(pwd)/rel"
 rm -rf "$REL"; mkdir -p "$REL"
 git_auth clone -q --branch main "$SERVER_URL/$REPOSITORY.git" "$REL/repo"
 cd "$REL/repo"
-git cat-file -e "$BASE_SHA^{commit}" || die "base $BASE_SHA not in main"
+git cat-file -e "$BASE_SHA^{commit}" && git merge-base --is-ancestor "$BASE_SHA" HEAD || die "base $BASE_SHA not in main"
 git show "$BASE_SHA:.forgejo/module-ci.conf" > "$REL/module-ci.conf"
 load_conf "$REL/module-ci.conf"
 
