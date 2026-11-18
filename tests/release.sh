@@ -87,7 +87,7 @@ if [ -n "\$CURL_STATE" ]; then
         k=GIT_CONFIG_KEY_\$i v=GIT_CONFIG_VALUE_\$i
         [ "\${!k}" = http.extraHeader ] && [ "\${!v}" = "Authorization: token \$CURL_TOKEN" ] && envauth=yes
     done
-    printf '%s\\t%s\\n' "\${1:-}" "\$envauth" >>"\$CURL_STATE/git-env.tsv"
+    printf '%s\\t%s\\t%s\\n' "\${1:-}" "\$envauth" "\${GIT_HTTP_LOW_SPEED_LIMIT:--}/\${GIT_HTTP_LOW_SPEED_TIME:--}" >>"\$CURL_STATE/git-env.tsv"
 fi
 exec "$REAL_GIT" "\$@"
 EOF
@@ -232,6 +232,13 @@ check "release: no retry on POST, PATCH or DELETE" no_retry_on_changes "$W/token
 check "failed release: no retry on the draft DELETE" no_retry_on_changes "$W/tokenfail"
 check "failed release: every curl call has time limits" all_calls_time_limited "$W/tokenfail"
 check "release: API reads are still retried" reads_retried "$W/token"
+# git has no time limit of its own: every git call gets a stall limit
+# (GIT_HTTP_LOW_SPEED_*) from the environment
+git_stall_limited() {
+    awk -F'\t' '{ n++; if ($3 !~ /^[0-9]+\/[0-9]+$/) bad++ } END { exit !(n > 0 && bad == 0) }' "$1/state/git-env.tsv"
+}
+check "release: every git call has a stall limit" git_stall_limited "$W/token"
+check "failed release: every git call has a stall limit" git_stall_limited "$W/tokenfail"
 
 # Build step, offline. setpriv and chown are stubs: the build runs as the
 # tester (no uid change), and the stub never runs "kill -9 -1". build() in
@@ -272,15 +279,19 @@ build_case() {
     RC=$?
     D=$d
 }
+not_in_env() {
+    [ -s "$1/work/.ci-out/env" ] && ! grep -q "^$2" "$1/work/.ci-out/env"
+}
 not_in_desc() {
     ! grep -qs "secret line" "$1/work/.ci-out/desc" "$1/work/.ci-out.old/desc"
 }
 if [ "${PD_TEST_BUILD_MODE:-}" != 1 ] || [ ! -f /.dockerenv ]; then
     echo "skip build step (only in a container with PD_TEST_BUILD_MODE=1)"
 elif [ "$(PATH="$STUBS:$PATH" command -v setpriv)" = "$STUBS/setpriv" ]; then
-    build_case plain 'printf x >"$OUT/module.zip"; echo "upstream 1.0" >"$OUT/upstream-desc"'
+    build_case plain 'printf x >"$OUT/module.zip"; echo "upstream 1.0" >"$OUT/upstream-desc"; tr "\\0" "\\n" </proc/$$/environ >"$OUT/env"'
     check "build: exit 0" [ "$RC" = 0 ]
     [ "$RC" = 0 ] || sed 's/^/    /' "$D/log"
+    check "build: the build user gets no git stall limit" not_in_env "$D" GIT_HTTP_LOW_SPEED_
     check "build: desc from upstream-desc" [ "$(cat "$D/work/.ci-out/desc")" = "upstream 1.0" ]
     build_case desclink 'printf x >"$OUT/module.zip"; echo planted >"$OUT/upstream-desc"; ln -s "$V/file" "$OUT/desc"'
     check "build, desc planted as a link: file behind it untouched" [ "$(cat "$D/v/file")" = precious ]

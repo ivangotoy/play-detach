@@ -35,6 +35,9 @@ BUILD_UID=1000
 OUT="$WORK/.ci-out"
 export GIT_AUTHOR_NAME="Ivan Angelov" GIT_AUTHOR_EMAIL="ivangotoy@gmail.com"
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
+# git has no time limit of its own: a transfer that stalls (under 1 byte/s for 2 minutes) fails
+# instead of waiting for the job timeout. The build user does not get these (see the build step).
+export GIT_HTTP_LOW_SPEED_LIMIT=1 GIT_HTTP_LOW_SPEED_TIME=120
 
 log() { printf '==> %s\n' "$*" >&2; }
 die() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
