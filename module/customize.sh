@@ -148,16 +148,23 @@ fi
 
 if [ -d "$TERMUX_BIN" ]; then
     owner=$(stat -c %u:%g "$TERMUX_BIN")
-    # Termux owns this folder: whatever is there (a link too) is removed, not
-    # followed, and the command is only written as a new file (noclobber)
-    rm -f "$TERMUX_BIN/play-detach"
-    (set -C && cat >"$TERMUX_BIN/play-detach") <<'EOF' &&
+    # Termux owns this folder: root writes nothing in it and follows no link
+    # there. The command is made in the root-only data folder with its owner
+    # and mode, then renamed in from inside the folder (mv -T replaces a link
+    # and never follows it). A link among the last three folders
+    # (files/usr/bin) would put it elsewhere: then it is not installed.
+    top=${TERMUX_BIN%/*/*/*}
+    new="$DATA_DIR/termux-command.tmp.$$"
+    rm -f "$new"
+    cat >"$new" <<'EOF' &&
 #!/data/data/com.termux/files/usr/bin/sh
 exec su -c /data/adb/modules/play-detach/play-detach "$@"
 EOF
-    chown -h "$owner" "$TERMUX_BIN/play-detach" &&
-    chmod 755 "$TERMUX_BIN/play-detach" &&
+    chown "$owner" "$new" && chmod 755 "$new" &&
+    (cd -P "$TERMUX_BIN" && [ "$(pwd -P)" = "$(cd -P "$top" && pwd -P)/${TERMUX_BIN#"$top"/}" ] &&
+        rm -f play-detach && mv -T -f "$new" play-detach) &&
     ui_print "$(m "- Termux command installed: play-detach" "- В Termux установлена команда play-detach")"
+    rm -f "$new"
 fi
 
 ui_print "$(m "- Manage apps from the module WebUI or the play-detach command" "- Управляйте приложениями через WebUI модуля или команду play-detach")"

@@ -140,8 +140,23 @@ hold() { printf ': >"$1.reached"; i=0; while [ -e "$1.wait" ] && [ $i -lt 300 ];
     echo 'if [ -n "$PD_TEST_RM_BLOCK" ]; then for a; do [ "$a" = "$PD_TEST_RM_BLOCK" ] && {'
     hold | sed 's/\$1/$PD_TEST_RM_FLAG/g'
     echo 'break; }; done; fi'
+    # PD_TEST_RM_REPLANT: after removing that path (or its name), a link to
+    # PD_TEST_RM_LINK is put there again, as a racing owner of the folder could
+    echo 'if [ -n "$PD_TEST_RM_REPLANT" ]; then for a; do if [ "$a" = "$PD_TEST_RM_REPLANT" ] || [ "$a" = "${PD_TEST_RM_REPLANT##*/}" ]; then'
+    echo "    $REAL_RM \"\$@\"; ln -s \"\$PD_TEST_RM_LINK\" \"\$PD_TEST_RM_REPLANT\"; exit 0"
+    echo 'fi; done; fi'
     echo "exec $REAL_RM \"\$@\""
 } >"$STUBS/rm"
+# chmod that swaps the file PD_TEST_CHMOD_SWAP for a link to
+# PD_TEST_CHMOD_TO right before changing its mode
+REAL_CHMOD=$(command -v chmod)
+cat >"$STUBS/chmod" <<EOF
+#!/bin/sh
+if [ -n "\$PD_TEST_CHMOD_SWAP" ]; then
+    for a; do [ "\$a" = "\$PD_TEST_CHMOD_SWAP" ] && $REAL_RM -f "\$a" && ln -s "\$PD_TEST_CHMOD_TO" "\$a"; done
+fi
+exec $REAL_CHMOD "\$@"
+EOF
 {
     echo '#!/bin/sh'
     echo 'if [ -n "$PD_TEST_SORT_FLAG" ]; then'
@@ -149,7 +164,7 @@ hold() { printf ': >"$1.reached"; i=0; while [ -e "$1.wait" ] && [ $i -lt 300 ];
     echo 'fi'
     echo "exec $REAL_SORT \"\$@\""
 } >"$STUBS/sort"
-chmod 755 "$STUBS/rm" "$STUBS/sort"
+chmod 755 "$STUBS/rm" "$STUBS/sort" "$STUBS/chmod"
 
 # A fresh fake phone for one test case
 fresh() {
@@ -489,7 +504,7 @@ install_module() {
         API=34
         KSU=true
         PATH="$STUBS:$PATH"
-        PD_TERMUX_BIN=$C/termux/bin
+        PD_TERMUX_BIN=${TBIN:-$C/termux/bin}
         export PD_TERMUX_BIN
         # shellcheck disable=SC1091
         . "$MODPATH/customize.sh"
@@ -528,6 +543,43 @@ mkdir -p "$C/termux/bin"
 echo old >"$C/termux/bin/play-detach"
 install_module
 check "install: old Termux command replaced" grep -qx 'exec su -c /data/adb/modules/play-detach/play-detach "$@"' "$C/termux/bin/play-detach"
+# A link among the Termux folders (here usr) must not move the command
+# into the folder it points to
+fresh
+mkdir -p "$C/tx/files" "$C/else/usr/bin"
+ln -s "$C/else/usr" "$C/tx/files/usr"
+TBIN=$C/tx/files/usr/bin install_module
+check "install: Termux usr folder as a link: nothing written behind it" [ ! -e "$C/else/usr/bin/play-detach" ]
+# Termux swaps the new command for a link before its mode is set: the file
+# behind the link must keep its mode
+fresh
+mkdir -p "$C/termux/bin"
+echo precious >"$C/victim"
+"$REAL_CHMOD" 600 "$C/victim"
+(
+    PD_TEST_CHMOD_SWAP=$C/termux/bin/play-detach PD_TEST_CHMOD_TO=$C/victim
+    export PD_TEST_CHMOD_SWAP PD_TEST_CHMOD_TO
+    install_module
+)
+check "install: command swapped for a link before chmod: file behind it keeps its mode" [ "$(stat -c %a "$C/victim")" = 600 ]
+# Termux plants a link to a pipe again right after the old command is
+# removed: root must not write through it
+fresh
+mkdir -p "$C/termux/bin"
+mkfifo "$C/pipe"
+timeout 10 cat "$C/pipe" >"$C/pipe.got" 2>/dev/null &
+readpid=$!
+(
+    PD_TEST_RM_REPLANT=$C/termux/bin/play-detach PD_TEST_RM_LINK=$C/pipe
+    export PD_TEST_RM_REPLANT PD_TEST_RM_LINK
+    install_module
+)
+# ends the reader when nothing was written (bounded, the reader may be gone)
+timeout 5 sh -c ': >"$1"' sh "$C/pipe" >/dev/null 2>&1 &
+wait $readpid
+check "install: link to a pipe planted after the remove: nothing written through it" [ ! -s "$C/pipe.got" ]
+check "install: link to a pipe planted after the remove: command is a file" \
+    sh -c '[ -f "$1" ] && [ ! -L "$1" ] && grep -q "^exec su -c" "$1"' sh "$C/termux/bin/play-detach"
 fresh
 install_module x86_64
 check "install: abort on non-arm64" grep -q '^ABORT: ! Only arm64' "$C/install.log"
