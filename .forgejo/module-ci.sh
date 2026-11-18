@@ -8,8 +8,9 @@
 #                                   push merge -> publish -> commit update.json
 # The release step runs this script and the config as fetched from the dispatched
 # commit, never the copies in the build workspace. Any failure before publish
-# deletes the draft. Only the upstream merge is pushed before publish (the tag
-# is made at that commit); a failure after that push leaves the merge on main.
+# deletes the draft. The merge with upstream is pushed to main right before the
+# publish call, so a failure before that push pushes nothing, and a failed
+# publish leaves the merge on main (without a release).
 #
 # Per-repo settings: .forgejo/module-ci.conf (sourced shell)
 #   UPSTREAM_URL, UPSTREAM_BRANCH   upstream merged into main ("" = none)
