@@ -318,6 +318,10 @@ com.example.inst2" ]
     nospace scan
     check "scan, no space: seen.list kept" [ "$(cat "$PD_DATA_DIR/seen.list")" = com.example.oldside ]
     check "scan, no space: auto.log kept" [ "$(wc -l <"$PD_DATA_DIR/auto.log")" = 2 ]
+    check "scan, no space: no temporary file left" [ -z "$(ls "$PD_DATA_DIR" | grep '\.tmp\.')" ]
+    echo "loaded=$(($(date +%s) - 100)) packages=1" >"$PD_DATA_DIR/status"
+    nospace status
+    check "status, no space: no temporary file left" [ -z "$(ls "$PD_DATA_DIR" | grep '\.tmp\.')" ]
     pd scan
     check "scan after a full /data: only the new app detached" list_is com.example.new
 else

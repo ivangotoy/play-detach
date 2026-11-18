@@ -197,7 +197,7 @@ trim_history() {
         *" $DATA_DIR/list.lock "*) ;;
         *) take_lock "$DATA_DIR/list.lock" 0 30 || return 0 ;;
         esac
-        tail -n 200 "$HISTORY" >"$HISTORY.tmp.$$" && mv -f "$HISTORY.tmp.$$" "$HISTORY"
+        tail -n 200 "$HISTORY" >"$HISTORY.tmp.$$" && mv -f "$HISTORY.tmp.$$" "$HISTORY" || rm -f "$HISTORY.tmp.$$"
     fi
 }
 
@@ -357,7 +357,8 @@ read_status() {
         fi
         h=${res% *}
         a=${res#* }
-        echo "hook=$h api=$a at=$loaded" >"$HOOK_FILE.tmp.$$" && mv -f "$HOOK_FILE.tmp.$$" "$HOOK_FILE"
+        echo "hook=$h api=$a at=$loaded" >"$HOOK_FILE.tmp.$$" && mv -f "$HOOK_FILE.tmp.$$" "$HOOK_FILE" ||
+            rm -f "$HOOK_FILE.tmp.$$"
     fi
     hook=$h
     api=$a
@@ -399,7 +400,7 @@ scan_store() {
     fi
     [ "$store_code" = "$code" ] && [ "$store_name" = "$name" ] && return 0
     echo "code=$code name=${name:-?} changed=$changed" >"$STORE_FILE.tmp.$$" &&
-        mv -f "$STORE_FILE.tmp.$$" "$STORE_FILE"
+        mv -f "$STORE_FILE.tmp.$$" "$STORE_FILE" || rm -f "$STORE_FILE.tmp.$$"
 }
 
 # Prints "package installer" for every user app.
@@ -509,7 +510,7 @@ scan_apps() {
     chmod 600 "$AUTO_LOG"
     # Keep the log short
     if [ "$(wc -l <"$AUTO_LOG")" -gt 30 ]; then
-        tail -n 30 "$AUTO_LOG" >"$AUTO_LOG.tmp.$$" && mv -f "$AUTO_LOG.tmp.$$" "$AUTO_LOG"
+        tail -n 30 "$AUTO_LOG" >"$AUTO_LOG.tmp.$$" && mv -f "$AUTO_LOG.tmp.$$" "$AUTO_LOG" || rm -f "$AUTO_LOG.tmp.$$"
     fi
 }
 
