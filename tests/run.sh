@@ -1,0 +1,341 @@
+#!/bin/sh
+# Play Detach - tests. Dependency-free POSIX sh: sh tests/run.sh
+#
+# Runs the declared syntax checks and drives the real module scripts (the
+# play-detach command, service.sh, customize.sh) with stub Android commands
+# on PATH and a fake data folder (PD_DATA_DIR, PD_STORAGE, PD_TERMUX_BIN).
+# Checks that need bash, node, python3, git or unzip are skipped when the tool
+# is missing. Not part of the module zip (build.sh packs module/ only).
+#
+#   TMPDIR         where the scratch folder is made (default /tmp)
+#   PD_TEST_STUBS  folder for the stub commands (default: inside the scratch folder)
+#   PD_TEST_KEEP   set to keep the scratch folder for a look afterwards
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+SH=${SH:-sh}
+export LC_ALL=C
+unset PD_BB PD_DATA_DIR PD_STORAGE PD_TERMUX_BIN
+
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/play-detach-test.XXXXXX") || exit 2
+STUBS=${PD_TEST_STUBS:-$WORK/stubs}
+mkdir -p "$STUBS" || exit 2
+[ -n "$PD_TEST_KEEP" ] || trap 'rm -rf "$WORK"' EXIT
+trap 'exit 1' INT TERM HUP
+
+pass=0
+fail=0
+skip=0
+ok() {
+    pass=$((pass + 1))
+    echo "ok   $1"
+}
+no() {
+    fail=$((fail + 1))
+    echo "FAIL $1"
+}
+skipped() {
+    skip=$((skip + 1))
+    echo "skip $1"
+}
+check() {
+    name=$1
+    shift
+    if "$@"; then ok "$name"; else no "$name"; fi
+}
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# ---------------------------------------------------------------------------
+# Declared checks
+# ---------------------------------------------------------------------------
+
+for f in module/play-detach module/customize.sh module/post-fs-data.sh module/service.sh \
+    module/uninstall.sh module/META-INF/com/google/android/update-binary; do
+    check "sh -n $f" "$SH" -n "$ROOT/$f"
+done
+for f in build.sh .forgejo/module-ci.sh tests/release.sh; do
+    if have bash; then check "bash -n $f" bash -n "$ROOT/$f"; else skipped "bash -n $f (no bash)"; fi
+done
+for f in "$ROOT"/module/webroot/*.js; do
+    if have node; then check "node --check ${f#"$ROOT"/}" node --check "$f"; else skipped "node --check ${f#"$ROOT"/} (no node)"; fi
+done
+if have python3; then
+    for f in update.json .forgejo/update.json; do
+        check "json $f" python3 -I -c 'import json,sys;json.load(open(sys.argv[1]))' "$ROOT/$f"
+    done
+    if python3 -I -c 'import yaml' 2>/dev/null; then
+        check "yaml .forgejo/workflows/module-release.yml" python3 -I -c 'import sys,yaml;yaml.safe_load(open(sys.argv[1]))' \
+            "$ROOT/.forgejo/workflows/module-release.yml"
+    else
+        skipped "yaml .forgejo/workflows/module-release.yml (no python3 yaml)"
+    fi
+else
+    skipped "json and yaml checks (no python3)"
+fi
+
+# ---------------------------------------------------------------------------
+# Stub Android commands. Each call is logged to $WORK/calls.log.
+# ---------------------------------------------------------------------------
+
+stub() {
+    {
+        echo '#!/bin/sh'
+        echo "echo \"$1 \$*\" >>\"$WORK/calls.log\""
+        cat
+    } >"$STUBS/$1"
+    chmod 755 "$STUBS/$1"
+}
+stub id <<'EOF'
+[ "$1" = -u ] && echo 0 || echo "uid=0(root) gid=0(root)"
+EOF
+for c in am cmd su magisk settings logcat getevent; do stub "$c" </dev/null; done
+stub pidof <<'EOF'
+exit 1
+EOF
+stub getprop <<'EOF'
+[ "$1" = sys.boot_completed ] && echo 1
+exit 0
+EOF
+stub dumpsys <<'EOF'
+echo "    versionCode=84021 minSdk=29 targetSdk=35"
+echo "    versionName=44.1.20-31"
+EOF
+# pm list packages -3 -i prints the lines of $PD_TEST_PM
+stub pm <<'EOF'
+[ -f "$PD_TEST_PM" ] && cat "$PD_TEST_PM"
+exit 0
+EOF
+# busybox --list / busybox inotifyd for service.sh: one /data/app event, then
+# a harmless event every second while the fake module folder exists
+stub busybox <<'EOF'
+case "$1" in
+    --list) echo inotifyd ;;
+    inotifyd)
+        d=${4%:*}
+        printf 'n\t/data/app\tcom.example.app\n'
+        i=0
+        while [ -d "$PD_TEST_MOD" ] && [ $i -lt 60 ]; do
+            sleep 1
+            printf 'y\t%s\tother\n' "$d"
+            i=$((i + 1))
+        done
+        ;;
+    *) exit 1 ;;
+esac
+EOF
+
+# A fresh fake phone for one test case
+fresh() {
+    C=$WORK/case
+    rm -rf "$C"
+    mkdir -p "$C/data" "$C/storage/Download" "$C/storage/Play-Detach"
+    : >"$WORK/calls.log"
+    PD_DATA_DIR=$C/data
+    PD_STORAGE=$C/storage
+    PD_TEST_PM=$C/pm.txt
+    export PD_DATA_DIR PD_STORAGE PD_TEST_PM
+}
+
+# Runs the play-detach command; output in $C/out, error output in $C/err
+pd() {
+    PATH="$STUBS:$PATH" PD_BB=1 "$SH" "$ROOT/module/play-detach" "$@" >"$C/out" 2>"$C/err"
+}
+list_is() {
+    [ "$(cat "$PD_DATA_DIR/detach.list" 2>/dev/null)" = "$1" ]
+}
+out_has() { grep -qF -- "$1" "$C/out"; }
+err_has() { grep -qF -- "$1" "$C/err"; }
+not() { ! "$@"; }
+
+# ---------------------------------------------------------------------------
+# play-detach command
+# ---------------------------------------------------------------------------
+
+fresh
+pd add com.example.two com.example.app
+check "add: exit 0" [ $? = 0 ]
+check "add: list sorted" list_is "com.example.app
+com.example.two"
+check "add: list mode 600" [ "$(stat -c %a "$PD_DATA_DIR/detach.list")" = 600 ]
+check "add: history logged" [ "$(grep -c ' detach user com.example.' "$PD_DATA_DIR/history.log")" = 2 ]
+check "add: Play Store restarted" grep -q '^am force-stop com.android.vending' "$WORK/calls.log"
+check "add: automatic backup" [ -s "$PD_STORAGE/Play-Detach/play-detach-auto.txt" ]
+pd list
+check "list: prints the list" [ "$(cat "$C/out")" = "com.example.app
+com.example.two" ]
+
+for bad in "../x" "com.example;touch $C/pwned" ".com.example" "com..example" "com example" ""; do
+    pd add "$bad"
+    check "add rejects '$bad'" [ $? = 1 ]
+done
+check "add: rejected names leave the list" list_is "com.example.app
+com.example.two"
+check "add: no command ran from a name" [ ! -e "$C/pwned" ]
+
+pd remove com.example.two
+check "remove: exit 0" [ $? = 0 ]
+check "remove: list" list_is "com.example.app"
+check "remove: history" grep -q ' reattach user com.example.two$' "$PD_DATA_DIR/history.log"
+pd set com.example.b com.example.a
+check "set: replaces the list" list_is "com.example.a
+com.example.b"
+pd clear
+check "clear: empty list" list_is ""
+check "clear: automatic backup kept" grep -qx com.example.b "$PD_STORAGE/Play-Detach/play-detach-auto.txt"
+pd history 3
+check "history: last lines" [ "$(wc -l <"$C/out")" = 3 ]
+pd frobnicate
+check "unknown command: exit 1" [ $? = 1 ]
+
+# import / backup / restore
+fresh
+printf '# comment\r\n  com.example.one  \n\ncom.example.two\n' >"$C/in.txt"
+pd import "$C/in.txt"
+check "import: exit 0" [ $? = 0 ]
+check "import: list" list_is "com.example.one
+com.example.two"
+printf 'com.example.one com.example.x\n' >"$C/bad.txt"
+pd import "$C/bad.txt"
+check "import: two names on a line rejected" [ $? = 1 ]
+pd backup
+check "backup: default file" [ -s "$PD_STORAGE/Play-Detach/play-detach-backup.txt" ]
+check "backup: header and names" [ "$(grep -vc '^#' "$PD_STORAGE/Play-Detach/play-detach-backup.txt")" = 2 ]
+pd clear
+pd restore "$PD_STORAGE/Play-Detach/play-detach-backup.txt"
+check "restore: exit 0" [ $? = 0 ]
+check "restore: list back" list_is "com.example.one
+com.example.two"
+pd restore "$C/missing.txt"
+check "restore: missing file exit 1" [ $? = 1 ]
+rm -rf "$PD_STORAGE/Play-Detach"
+pd backup
+check "backup: falls back to Download" [ -s "$PD_STORAGE/Download/play-detach-backup.txt" ]
+
+# status
+fresh
+pd add com.example.app
+echo "loaded=1700000000 packages=1" >"$PD_DATA_DIR/status"
+echo "hook=ok api=35 at=1700000000" >"$PD_DATA_DIR/hook"
+pd status
+check "status: exit 0" [ $? = 0 ]
+check "status: fields" out_has "loaded=1700000000"
+check "status: hook" out_has "hook=ok"
+check "status: detached count" out_has "detached=1"
+
+# scan and auto-detach
+fresh
+printf 'package:com.example.old  installer=com.android.vending\n' >"$PD_TEST_PM"
+pd autodetach on
+check "autodetach on: exit 0" [ $? = 0 ]
+check "autodetach on: snapshot of current apps" grep -qx com.example.old "$PD_DATA_DIR/seen.list"
+printf 'package:com.example.old  installer=com.android.vending\npackage:com.example.side  installer=com.google.android.packageinstaller\npackage:com.example.store  installer=com.android.vending\n' >"$PD_TEST_PM"
+pd scan
+check "scan: exit 0" [ $? = 0 ]
+check "scan: new sideloaded app detached" list_is "com.example.side"
+check "scan: auto history" grep -q ' detach auto com.example.side$' "$PD_DATA_DIR/history.log"
+check "scan: Play Store version saved" grep -q '^code=84021 ' "$PD_DATA_DIR/store"
+check "scan: notification posted" grep -q '^su 2000 -c cmd notification post' "$WORK/calls.log"
+pd autoskip add com.example.inst
+check "autoskip add" [ "$(cat "$C/out")" = com.example.inst ]
+pd autoskip remove com.example.inst
+check "autoskip remove" [ ! -s "$C/out" ]
+pd autoskip add "bad;name"
+check "autoskip rejects a bad name" [ $? = 1 ]
+
+# ---------------------------------------------------------------------------
+# service.sh: a /data/app event starts a scan; the watcher ends when the
+# module folder is gone
+# ---------------------------------------------------------------------------
+
+fresh
+MOD=$C/mod
+mkdir -p "$MOD"
+cp "$ROOT/module/service.sh" "$MOD/service.sh"
+printf '#!/bin/sh\necho "$1" >>"%s"\n' "$C/cli.log" >"$MOD/play-detach"
+chmod 755 "$MOD/play-detach"
+PATH="$STUBS:$PATH" PD_TEST_MOD=$MOD "$SH" "$MOD/service.sh" </dev/null >/dev/null 2>&1
+i=0
+while [ $i -lt 20 ] && ! grep -qx scan "$C/cli.log" 2>/dev/null; do
+    sleep 1
+    i=$((i + 1))
+done
+check "service: event starts a scan" grep -qx scan "$C/cli.log"
+check "service: event pipe made" [ -p "$PD_DATA_DIR/events.fifo" ]
+rm -rf "$MOD"
+if have pgrep; then
+    i=0
+    while [ $i -lt 15 ] && pgrep -f "$MOD/service.sh" >/dev/null; do
+        sleep 1
+        i=$((i + 1))
+    done
+    check "service: watcher ends without the module" not pgrep -f "$MOD/service.sh"
+    pkill -f "$MOD/service.sh" 2>/dev/null
+else
+    skipped "service: watcher end (no pgrep)"
+fi
+
+# ---------------------------------------------------------------------------
+# customize.sh (run the way the installer runs it: sourced, with its helpers)
+# ---------------------------------------------------------------------------
+
+# install_module [arch]: a copy of module/ as MODPATH; a file $C/detach.txt
+# is put in it as detach.txt. Output in $C/install.log.
+install_module() {
+    rm -rf "$C/mp"
+    cp -R "$ROOT/module" "$C/mp"
+    [ -f "$C/detach.txt" ] && cp "$C/detach.txt" "$C/mp/detach.txt"
+    # The installer runs $MODPATH/play-detach; its #!/system/bin/sh does not
+    # exist here, so that copy starts the real script with $SH instead
+    printf '#!/bin/sh\nexec %s "%s" "$@"\n' "$SH" "$ROOT/module/play-detach" >"$C/mp/play-detach"
+    (
+        ui_print() { echo "$1"; }
+        abort() {
+            echo "ABORT: $1"
+            exit 1
+        }
+        set_perm() { chmod "$4" "$1"; }
+        set_perm_recursive() { :; }
+        MODPATH=$C/mp
+        ARCH=${1:-arm64}
+        API=34
+        KSU=true
+        PATH="$STUBS:$PATH"
+        PD_TERMUX_BIN=$C/termux/bin
+        export PD_TERMUX_BIN
+        # shellcheck disable=SC1091
+        . "$MODPATH/customize.sh"
+    ) >"$C/install.log" 2>&1
+}
+
+fresh
+mkdir -p "$C/termux/bin"
+printf 'com.example.app\n' >"$C/detach.txt"
+install_module
+check "install: no abort" not grep -q ABORT "$C/install.log"
+check "install: data folder 700" [ "$(stat -c %a "$PD_DATA_DIR")" = 700 ]
+check "install: detach.txt imported" list_is "com.example.app"
+check "install: detach.txt removed" [ ! -e "$C/mp/detach.txt" ]
+check "install: Termux command" grep -qx 'exec su -c /data/adb/modules/play-detach/play-detach "$@"' "$C/termux/bin/play-detach"
+check "install: Termux command mode 755" [ "$(stat -c %a "$C/termux/bin/play-detach")" = 755 ]
+fresh
+install_module x86_64
+check "install: abort on non-arm64" grep -q '^ABORT: ! Only arm64' "$C/install.log"
+
+# ---------------------------------------------------------------------------
+# .forgejo/module-ci.sh release step, offline (local bare repo, curl stub)
+# ---------------------------------------------------------------------------
+
+if have bash && have git && have python3 && have unzip && have sha256sum; then
+    mkdir -p "$WORK/release" "$STUBS/release"
+    bash "$ROOT/tests/release.sh" "$ROOT" "$WORK/release" "$STUBS/release"
+    rc=$?
+    n=$(grep -c "^ok " "$WORK/release/results" 2>/dev/null)
+    pass=$((pass + ${n:-0}))
+    n=$(grep -c "^FAIL " "$WORK/release/results" 2>/dev/null)
+    fail=$((fail + ${n:-0}))
+    [ $rc = 0 ] || [ -s "$WORK/release/results" ] || no "module-ci release harness (exit $rc)"
+else
+    skipped "module-ci release (needs bash, git, python3, unzip, sha256sum)"
+fi
+
+echo "passed $pass, failed $fail, skipped $skip"
+[ "$fail" = 0 ]

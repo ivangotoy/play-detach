@@ -15,7 +15,7 @@
 
 MODDIR=${0%/*}
 CLI="$MODDIR/play-detach"
-DATA=/data/adb/play-detach
+DATA=${PD_DATA_DIR:-/data/adb/play-detach}
 STATUS="$DATA/status"
 FIFO="$DATA/events.fifo"
 SAFETY=3600 # seconds between full scans

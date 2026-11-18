@@ -2,8 +2,8 @@
 # Play Detach - installer
 # Copyright 2026 Tears Burn (nikakvo). Licensed under the Apache License 2.0.
 
-DATA_DIR=/data/adb/play-detach
-TERMUX_BIN=/data/data/com.termux/files/usr/bin
+DATA_DIR=${PD_DATA_DIR:-/data/adb/play-detach}
+TERMUX_BIN=${PD_TERMUX_BIN:-/data/data/com.termux/files/usr/bin}
 
 # Language of the messages: the one chosen in the WebUI (EN / RU switch),
 # otherwise the phone's language. Russian translation based on the work of

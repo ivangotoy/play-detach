@@ -17,11 +17,11 @@ fi
 umask 077
 set -f
 
-DATA_DIR=/data/adb/play-detach
+DATA_DIR=${PD_DATA_DIR:-/data/adb/play-detach}
 LIST="$DATA_DIR/detach.list"
 # Internal storage as seen by root (/sdcard in file managers). Backups go to
 # the Play-Detach folder the installer creates, or to Download if it is gone.
-STORAGE=/data/media/0
+STORAGE=${PD_STORAGE:-/data/media/0}
 BACKUP_DIR="$STORAGE/Play-Detach"
 AUTO_NAME=play-detach-auto.txt
 STORE=com.android.vending
