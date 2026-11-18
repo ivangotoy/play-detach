@@ -233,6 +233,11 @@ save_backup() {
         echo "Error: folder not found: $dir" >&2
         return 1
     }
+    # A folder as the target would get the file moved into it and mode 664
+    [ ! -d "$file" ] || {
+        echo "Error: $file is a folder, give a file name" >&2
+        return 1
+    }
     count=$(read_list | wc -l)
     tmp="$file.tmp.$$"
     {

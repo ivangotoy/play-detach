@@ -209,6 +209,12 @@ check "restore: list back" list_is "com.example.one
 com.example.two"
 pd restore "$C/missing.txt"
 check "restore: missing file exit 1" [ $? = 1 ]
+mkdir "$PD_STORAGE/Folder"
+chmod 775 "$PD_STORAGE/Folder"
+pd backup "$PD_STORAGE/Folder"
+check "backup to a folder: refused" [ $? = 1 ]
+check "backup to a folder: folder mode kept" [ "$(stat -c %a "$PD_STORAGE/Folder")" = 775 ]
+check "backup to a folder: nothing put in it" [ -z "$(ls -A "$PD_STORAGE/Folder")" ]
 rm -rf "$PD_STORAGE/Play-Detach"
 pd backup
 check "backup: falls back to Download" [ -s "$PD_STORAGE/Download/play-detach-backup.txt" ]
