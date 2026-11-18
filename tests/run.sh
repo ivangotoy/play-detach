@@ -423,6 +423,11 @@ check "install: abort on non-arm64" grep -q '^ABORT: ! Only arm64' "$C/install.l
 # .forgejo/module-ci.sh release step, offline (local bare repo, curl stub)
 # ---------------------------------------------------------------------------
 
+# The fork releases above the upstream build it replaces, so root managers
+# offer it as an update: released versionCode = module.prop's + offset
+off=$(sed -n 's/^VERSION_CODE_OFFSET=//p' "$ROOT/.forgejo/module-ci.conf")
+check "module-ci.conf: release versionCode above module.prop's" [ "${off:-0}" -ge 1 ]
+
 if have bash && have git && have python3 && have unzip && have sha256sum; then
     mkdir -p "$WORK/release" "$STUBS/release"
     bash "$ROOT/tests/release.sh" "$ROOT" "$WORK/release" "$STUBS/release"
