@@ -215,3 +215,20 @@ check "failed release: token in no curl or git argv" no_token_in_argv "$D"
 check "failed release: draft DELETE sends the header from a file" api_auth_from_file "$D" DELETE
 check "failed release: header file 0600 and removed" header_file_0600_and_gone "$D"
 
+# Every curl call is time-limited, and only reads are retried (a retried
+# POST/PATCH/DELETE can repeat a change the forge already made)
+all_calls_time_limited() {
+    awk -F'\t' '{ n++; if ($3 == "-" || $4 == "-") bad++ } END { exit !(n > 0 && bad == 0) }' "$1/state/calls.tsv"
+}
+no_retry_on_changes() {
+    awk -F'\t' '$1 ~ /^(POST|PATCH|DELETE)$/ { n++; if ($5 != "-") bad++ } END { exit !(n > 0 && bad == 0) }' "$1/state/calls.tsv"
+}
+reads_retried() {
+    awk -F'\t' -v api="$1/forge/api/v1/repos/$REPOSITORY" '$1 == "GET" && index($2, api) == 1 && $3 != "-" && $5 != "-" { r = 1 }
+        END { exit !r }' "$1/state/calls.tsv"
+}
+check "release: every curl call has connect and total time limits" all_calls_time_limited "$W/token"
+check "release: no retry on POST, PATCH or DELETE" no_retry_on_changes "$W/token"
+check "failed release: no retry on the draft DELETE" no_retry_on_changes "$W/tokenfail"
+check "failed release: every curl call has time limits" all_calls_time_limited "$W/tokenfail"
+check "release: API reads are still retried" reads_retried "$W/token"
