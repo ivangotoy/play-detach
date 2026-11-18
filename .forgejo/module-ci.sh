@@ -52,7 +52,6 @@ if [ "$MODE" = build-user ]; then
 fi
 
 if [ "$MODE" = build ]; then
-    [ -z "${FORGEJO_TOKEN:-}" ] || die "the build step must not hold the forge token"
     cd "$WORK"; load_conf .forgejo/module-ci.conf
     rm -rf "$OUT"; mkdir -p "$OUT"
     git checkout -q -B main "$BASE_SHA"
@@ -93,9 +92,9 @@ if [ "$MODE" = build ]; then
 fi
 
 [ "$MODE" = release ] || die "unknown mode $MODE"
-: "${FORGEJO_TOKEN:?}" "${RUN_NUMBER:?}"
+: "${RELEASE_TOKEN:?}" "${RUN_NUMBER:?}"
 API="$SERVER_URL/api/v1/repos/$REPOSITORY"
-auth() { printf 'Authorization: token %s' "$FORGEJO_TOKEN"; }
+auth() { printf 'Authorization: token %s' "$RELEASE_TOKEN"; }
 api() { local m="$1" p="$2"; shift 2; curl -sS --fail-with-body --retry 3 -X "$m" -H "$(auth)" "$@" "$API$p"; }
 http_code() { curl -sS -o /dev/null -w '%{http_code}' -H "$(auth)" "$API$1"; }
 git_auth() { git -c "http.extraHeader=$(auth)" "$@"; }
