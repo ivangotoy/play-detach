@@ -290,6 +290,39 @@ pd autoskip remove com.example.inst
 check "autoskip remove" [ ! -s "$C/out" ]
 pd autoskip add "bad;name"
 check "autoskip rejects a bad name" [ $? = 1 ]
+pd autoskip add com.example.inst
+pd autoskip remove com.example.inst
+check "autoskip remove of the last entry: exit 0" [ $? = 0 ]
+check "autoskip remove of the last entry: empty list" [ ! -s "$PD_DATA_DIR/auto-skip" ]
+
+# A full /data: with a file size limit of 0 and SIGXFSZ ignored every write
+# fails with an error, as on a full disk. A failed write must never replace
+# a state file.
+nospace() { (trap '' XFSZ && ulimit -f 0 && pd "$@"); }
+if (trap '' XFSZ && ulimit -f 0) 2>/dev/null; then
+    fresh
+    pd autoskip add com.example.inst
+    pd autoskip add com.example.inst2
+    nospace autoskip add com.example.more
+    check "autoskip add, no space: exit 1" [ $? = 1 ]
+    check "autoskip add, no space: list kept" [ "$(cat "$PD_DATA_DIR/auto-skip")" = "com.example.inst
+com.example.inst2" ]
+    nospace autoskip remove com.example.inst
+    check "autoskip remove, no space: list kept" [ "$(cat "$PD_DATA_DIR/auto-skip")" = "com.example.inst
+com.example.inst2" ]
+    fresh
+    printf 'package:com.example.oldside  installer=com.google.android.packageinstaller\n' >"$PD_TEST_PM"
+    pd autodetach on
+    printf '1700000000 com.example.gone\n1700000000 com.example.oldside\n' >"$PD_DATA_DIR/auto.log"
+    printf 'package:com.example.oldside  installer=com.google.android.packageinstaller\npackage:com.example.new  installer=com.google.android.packageinstaller\n' >"$PD_TEST_PM"
+    nospace scan
+    check "scan, no space: seen.list kept" [ "$(cat "$PD_DATA_DIR/seen.list")" = com.example.oldside ]
+    check "scan, no space: auto.log kept" [ "$(wc -l <"$PD_DATA_DIR/auto.log")" = 2 ]
+    pd scan
+    check "scan after a full /data: only the new app detached" list_is com.example.new
+else
+    skipped "full /data (no ulimit -f or trap XFSZ)"
+fi
 
 # ---------------------------------------------------------------------------
 # service.sh: a /data/app event starts a scan; the watcher ends when the

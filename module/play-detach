@@ -451,15 +451,20 @@ scan_apps() {
             esac
         done <"$AUTO_LOG")
         if [ "$keep" != "$(cat "$AUTO_LOG")" ]; then
-            if [ -n "$keep" ]; then lines_of "$keep" >"$AUTO_LOG.tmp.$$"; else : >"$AUTO_LOG.tmp.$$"; fi
-            mv -f "$AUTO_LOG.tmp.$$" "$AUTO_LOG"
+            if [ -n "$keep" ]; then lines_of "$keep" >"$AUTO_LOG.tmp.$$"; else : >"$AUTO_LOG.tmp.$$"; fi &&
+                mv -f "$AUTO_LOG.tmp.$$" "$AUTO_LOG" || rm -f "$AUTO_LOG.tmp.$$"
         fi
     fi
 
     # Remember the current apps before acting, so a failure never repeats.
     # Written only when an app was installed or removed: the WebUI reads its
     # time to see that the app list changed.
-    lines_of "$cur" | cut -d' ' -f1 | sed '/^$/d' | sort -u >"$SEEN.tmp.$$"
+    # A failed write (full /data) must not replace the list: nothing is
+    # done until the current apps can be remembered.
+    lines_of "$cur" | cut -d' ' -f1 | sed '/^$/d' | sort -u >"$SEEN.tmp.$$" || {
+        rm -f "$SEEN.tmp.$$"
+        return 1
+    }
     if cmp -s "$SEEN.tmp.$$" "$SEEN"; then
         rm -f "$SEEN.tmp.$$"
     else
@@ -749,8 +754,12 @@ case "$cmd" in
                 {
                     cat "$SKIP_FILE" 2>/dev/null
                     [ "$1" = add ] && echo "$2"
-                } | sed '/^$/d' | sort -u | { if [ "$1" = remove ]; then grep -vxF "$2"; else cat; fi; } >"$SKIP_FILE.tmp.$$"
-                mv -f "$SKIP_FILE.tmp.$$" "$SKIP_FILE" || die "cannot write $SKIP_FILE"
+                } | sed '/^$/d' | sort -u | { if [ "$1" = remove ]; then grep -vxF "$2"; else cat; fi; } |
+                    cat >"$SKIP_FILE.tmp.$$" && mv -f "$SKIP_FILE.tmp.$$" "$SKIP_FILE" || {
+                    # cat reports a failed write (busybox grep does not)
+                    rm -f "$SKIP_FILE.tmp.$$"
+                    die "cannot write $SKIP_FILE"
+                }
                 ;;
             '' | list) ;;
             *) die "use: autoskip [add|remove <installer>]" ;;
