@@ -25,19 +25,33 @@ cat >"$STUBS/curl" <<'EOF'
 # curl stub for the Forgejo release API. State in $CURL_STATE.
 S=$CURL_STATE
 printf '%s\n' "$*" >>"$S/argv.log"
-m=GET out="" w="" url="" upload=""
+m=GET out="" w="" url="" upload="" ct=- mt=- retry=- auth=none hfile=- hmode=-
 while [ $# -gt 0 ]; do
     case "$1" in
         -X) m=$2; shift ;;
         -o) out=$2; shift ;;
         -w) w=$2; shift ;;
         -F) upload=${2#attachment=@}; shift ;;
-        -H | -d | --retry) shift ;;
+        --connect-timeout) ct=$2; shift ;;
+        --max-time) mt=$2; shift ;;
+        --retry) retry=$2; shift ;;
+        -H)
+            case "$2" in
+                @*)
+                    hfile=${2#@}
+                    hmode=$(stat -c %a "$hfile" 2>/dev/null || echo missing)
+                    if [ "$(cat "$hfile" 2>/dev/null)" = "Authorization: token $CURL_TOKEN" ]; then auth=file-ok; else auth=file-bad; fi ;;
+                Authorization:*) auth=literal ;;
+            esac
+            shift ;;
+        -d) shift ;;
         -*) ;;
         *) url=$1 ;;
     esac
     shift
 done
+# one line per call: method url connect-timeout max-time retry auth header-file mode
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$m" "$url" "$ct" "$mt" "$retry" "$auth" "$hfile" "$hmode" >>"$S/calls.tsv"
 api="$SERVER_URL/api/v1/repos/$REPOSITORY"
 web="$SERVER_URL/$REPOSITORY"
 say() { if [ -n "$out" ]; then printf '%s' "$1" >"$out"; else printf '%s' "$1"; fi; }
@@ -52,7 +66,8 @@ case "$m $url" in
         say "{\"browser_download_url\": \"$web/releases/download/$(cat "$S/tag")\"}" ;;
     "PATCH $api/releases/7") touch "$S/published"; say '{}' ;;
     "DELETE $api/releases/7") touch "$S/deleted"; say '{}' ;;
-    "GET $web/releases/download/"*) cp "$S/asset.zip" "$out" ;;
+    "GET $web/releases/download/"*)
+        if [ "$CURL_FAIL" = back ]; then echo corrupt >"$out"; else cp "$S/asset.zip" "$out"; fi ;;
     "GET $web/raw/branch/main/"*)
         git --git-dir="$SERVER_URL/$REPOSITORY.git" show "main:${url#"$web/raw/branch/main/"}" ;;
     *) echo "curl stub: unexpected $m $url" >&2; exit 22 ;;
@@ -60,9 +75,28 @@ esac
 EOF
 chmod 755 "$STUBS/curl"
 
-# release_case <name> <built version> [side]: a forge repo with a fork-owned
-# module.prop (SYNC_ROOT_PROP), a built zip with that version, one release
-# run. With "side" the dispatched commit is on a branch other than main.
+# git wrapper: records argv and whether the token came in through
+# GIT_CONFIG_* (never through argv), then runs the real git
+REAL_GIT=$(command -v git)
+cat >"$STUBS/git" <<EOF
+#!/usr/bin/env bash
+if [ -n "\$CURL_STATE" ]; then
+    printf '%s\\n' "\$*" >>"\$CURL_STATE/git-argv.log"
+    envauth=no
+    for ((i = 0; i < \${GIT_CONFIG_COUNT:-0}; i++)); do
+        k=GIT_CONFIG_KEY_\$i v=GIT_CONFIG_VALUE_\$i
+        [ "\${!k}" = http.extraHeader ] && [ "\${!v}" = "Authorization: token \$CURL_TOKEN" ] && envauth=yes
+    done
+    printf '%s\\t%s\\n' "\${1:-}" "\$envauth" >>"\$CURL_STATE/git-env.tsv"
+fi
+exec "$REAL_GIT" "\$@"
+EOF
+chmod 755 "$STUBS/git"
+
+# release_case <name> <built version> [side|back]: a forge repo with a
+# fork-owned module.prop (SYNC_ROOT_PROP), a built zip with that version, one
+# release run. With "side" the dispatched commit is on a branch other than
+# main; with "back" the asset downloaded back is corrupt (fails after the draft).
 release_case() {
     local built=$2 d="$W/$1"
     rm -rf "$d"
@@ -97,7 +131,8 @@ PY
     echo "$TAG/mod-$TAG.zip" >"$d/state/tag"
     (
         cd "$d/run" &&
-            PATH="$STUBS:$PATH" CURL_STATE="$d/state" SERVER_URL="$d/forge" REPOSITORY=$REPOSITORY \
+            PATH="$STUBS:$PATH" CURL_STATE="$d/state" CURL_TOKEN=$TOKEN CURL_FAIL=${3:-} \
+                SERVER_URL="$d/forge" REPOSITORY=$REPOSITORY \
                 BASE_SHA=$BASE RELEASE_TOKEN=$TOKEN RUN_NUMBER=3 \
                 timeout 120 bash "$ROOT/.forgejo/module-ci.sh" release "$d/src"
     ) >"$d/log" 2>&1
@@ -144,3 +179,39 @@ release_case side v1.0 side
 check "release from a commit not on main: refused" [ "$RC" != 0 ]
 check "release from a commit not on main: nothing published" [ ! -f "$D/state/published" ]
 check "release from a commit not on main: no draft left" sh -c '[ ! -f "$1/state/asset.zip" ] || [ -f "$1/state/deleted" ]' sh "$D"
+
+# The release token never appears in argv: curl gets it from a 0600 header
+# file (-H @file) that is removed on exit, git through GIT_CONFIG_* variables
+no_token_in_argv() {
+    [ -s "$1/state/argv.log" ] && [ -s "$1/state/git-argv.log" ] &&
+        ! grep -qF "$TOKEN" "$1/state/argv.log" "$1/state/git-argv.log"
+}
+api_auth_from_file() {
+    awk -F'\t' -v api="$1/forge/api/v1/repos/$REPOSITORY" -v m="${2:-}" '
+        index($2, api) == 1 && (m == "" || $1 == m) { n++; if ($6 != "file-ok") bad++ }
+        END { exit !(n > 0 && bad == 0) }' "$1/state/calls.tsv"
+}
+header_file_0600_and_gone() {
+    local files f
+    files=$(awk -F'\t' '$7 != "-" { print $7 }' "$1/state/calls.tsv" | sort -u)
+    [ -n "$files" ] || return 1
+    awk -F'\t' '$7 != "-" && $8 != "600" { bad = 1 } END { exit bad }' "$1/state/calls.tsv" || return 1
+    for f in $files; do [ ! -e "$f" ] || return 1; done
+}
+git_auth_from_env() {
+    awk -F'\t' '$1 == "clone" && $2 == "yes" { c = 1 } $1 == "push" && $2 == "yes" { p = 1 }
+        END { exit !(c && p) }' "$1/state/git-env.tsv"
+}
+release_case token v1.0
+check "release: exit 0 (token case)" [ "$RC" = 0 ]
+check "release: token in no curl or git argv" no_token_in_argv "$D"
+check "release: every API call sends the header from a file" api_auth_from_file "$D"
+check "release: git gets the token through GIT_CONFIG_*" git_auth_from_env "$D"
+check "release: header file 0600 and removed" header_file_0600_and_gone "$D"
+release_case tokenfail v1.0 back
+check "failed release: exit 1" [ "$RC" != 0 ]
+check "failed release: draft deleted" [ -f "$D/state/deleted" ]
+check "failed release: token in no curl or git argv" no_token_in_argv "$D"
+check "failed release: draft DELETE sends the header from a file" api_auth_from_file "$D" DELETE
+check "failed release: header file 0600 and removed" header_file_0600_and_gone "$D"
+

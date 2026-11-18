@@ -101,10 +101,20 @@ fi
 [ "$MODE" = release ] || die "unknown mode $MODE"
 : "${RELEASE_TOKEN:?}" "${RUN_NUMBER:?}"
 API="$SERVER_URL/api/v1/repos/$REPOSITORY"
+# The token never goes into argv: curl reads the header from a 0600 file that is removed
+# on exit, git gets it through GIT_CONFIG_* environment variables
+AUTH_DIR="$(mktemp -d)"
+trap 'rm -rf "$AUTH_DIR"' EXIT
+AUTH_H="$AUTH_DIR/header"
+(umask 077; printf 'Authorization: token %s\n' "$RELEASE_TOKEN" > "$AUTH_H")
 auth() { printf 'Authorization: token %s' "$RELEASE_TOKEN"; }
-api() { local m="$1" p="$2"; shift 2; curl -sS --fail-with-body --retry 3 -X "$m" -H "$(auth)" "$@" "$API$p"; }
-http_code() { curl -sS -o /dev/null -w '%{http_code}' -H "$(auth)" "$API$1"; }
-git_auth() { git -c "http.extraHeader=$(auth)" "$@"; }
+api() { local m="$1" p="$2"; shift 2; curl -sS --fail-with-body --retry 3 -X "$m" -H "@$AUTH_H" "$@" "$API$p"; }
+http_code() { curl -sS -o /dev/null -w '%{http_code}' -H "@$AUTH_H" "$API$1"; }
+git_auth() {
+    (n="${GIT_CONFIG_COUNT:-0}"
+     export GIT_CONFIG_COUNT=$((n + 1)) "GIT_CONFIG_KEY_$n=http.extraHeader" "GIT_CONFIG_VALUE_$n=$(auth)"
+     git "$@")
+}
 
 REL="$(pwd)/rel"
 rm -rf "$REL"; mkdir -p "$REL"
@@ -210,6 +220,7 @@ cleanup() {
         log "failure before publish: deleting draft release $RELEASE_ID"
         api DELETE "/releases/$RELEASE_ID" >/dev/null || true
     fi
+    rm -rf "$AUTH_DIR"
     exit "$rc"
 }
 trap cleanup EXIT
@@ -225,7 +236,7 @@ log "draft release $RELEASE_ID, uploading $ZIP_NAME"
 ASSET_ID="$(api POST "/releases/$RELEASE_ID/assets?name=$ZIP_NAME" -F "attachment=@$ZIP" | jget id)"
 ASSET_URL="$(api GET "/releases/$RELEASE_ID/assets/$ASSET_ID" | jget browser_download_url)"
 log "downloading back $ASSET_URL"
-curl -sSL --fail-with-body -H "$(auth)" -o "$REL/back.zip" "$ASSET_URL"
+curl -sSL --fail-with-body -H "@$AUTH_H" -o "$REL/back.zip" "$ASSET_URL"
 [ "$(sha "$REL/back.zip")" = "$ZIP_SHA" ] || die "downloaded asset sha256 differs"
 unzip -tq "$REL/back.zip" >/dev/null || die "downloaded asset fails zip test"
 
