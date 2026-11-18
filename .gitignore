@@ -1,11 +1,3 @@
+out/
 *.zip
-*.so
-b.sh
-test*
-module/bin/*/detach
-module/bin/*/ksu_profile
-module/webroot/*
 *.log
-zygisk-rust
-aidl/*.aidl*
-.clangd

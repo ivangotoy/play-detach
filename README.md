@@ -1,23 +1,111 @@
-# zygisk-detach
+<p align="center">
+  <b>English</b> | 
+  <a href="/README_ru.md">Русский</a>
+</p>
+<hr>
 
-Detaches installed apps from Play Store against its aggressive updating policy which ignores the auto-update option user sets.
+<p align="center"><img src="module/banner.png" alt="Play Detach" width="640"></p>
 
-### How
-Hooks libbinder with zygisk
+# Play Detach
 
-### Usage
-* Enable zygisk in Magisk **or flash a Zygisk module if you are on KernelSU**
-* Flash zygisk-detach module
-* Reboot
-* Run the cli: `detach` (or `su -c /data/adb/modules/zygisk-detach/detach` if you are not using termux)  
-	or use [zygisk-detach-app](https://github.com/j-hc/zygisk-detach-app) if you dont wanna use the terminal  
-	or use the WebUI if you are on KernelSU
-* Select apps you wish to detach. Changes are applied immediately, no need to reboot.
+A Zygisk module that stops the Play Store from updating the apps you choose.
 
-### Note
-Another way to automatically detach any apps upon flashing the module is to put a `detach.txt` with the package names inside the module zip and the apps will be detached without using the cli once module is flashed.  
-An example of the detach.txt that should go in the zygisk-detach zip:
+The Play Store updates apps on its own, even when auto-update is turned off for them. Play Detach hides the chosen apps from the Play Store, so it never offers or installs updates for them. The apps themselves are not changed: they keep working, and you can still update them by hand.
+
+## Features
+
+- WebUI with app icons and names, search, and tabs for user, system and detached apps
+- One switch per app, changes apply right away without a reboot
+- Sideloaded apps (APK files, other stores, patched apps) are marked and can be detached all at once
+- Optional automatic detach of new sideloaded apps right after they are installed, with a notification; installers you trust (for example Aurora Store) can be excluded
+- Select several apps to detach or re-attach them together; long-press an app to open it in the Play Store
+- Status line that shows whether the module is active in the Play Store, with a self-check each time the Play Store starts and a notification if it stops working, for example after a Play Store update; it also tells when Zygisk did not load the module at all
+- History of list changes (when an app was detached or re-attached, and by whom)
+- Command line tool for terminals, plus a short `play-detach` command in Termux
+- Backup and restore of the list in its own Play-Detach folder in internal storage, plus an automatic backup after every change; the list can also be copied or shared as text
+- Optional `detach.txt` in the module zip to detach apps at install time
+- English and Russian, switchable in the WebUI (EN / RU); the installer and the module description follow the same choice
+- Works only inside the Play Store process, nothing else is touched
+
+## Requirements
+
+- arm64 device with Android 10 or newer
+- A working Zygisk: ReZygisk, Zygisk Next or NeoZygisk on KernelSU, SukiSU-Ultra or APatch, the built-in Zygisk of SukiSU-Ultra, or Zygisk enabled in Magisk
+- zygisk-detach must not run at the same time, both modules change the same Play Store calls. If it is installed, Play Detach copies its detached apps during install and offers to remove it (Vol+), keep it (Vol-), or disables it if no key is pressed
+
+## Install
+
+1. Download the zip from [Releases](https://github.com/nikakvo/play-detach/releases).
+2. Install it in your root manager and reboot.
+3. Open the module WebUI and turn on the switch next to the apps you want to detach.
+
+## Command line
+
 ```
-com.app1
-org.app2
+su -c '/data/adb/modules/play-detach/play-detach list'
+su -c '/data/adb/modules/play-detach/play-detach add com.example.app'
+su -c '/data/adb/modules/play-detach/play-detach remove com.example.app'
+su -c '/data/adb/modules/play-detach/play-detach clear'
+su -c '/data/adb/modules/play-detach/play-detach status'
+su -c '/data/adb/modules/play-detach/play-detach backup'
+su -c '/data/adb/modules/play-detach/play-detach restore /sdcard/Play-Detach/play-detach-backup.txt'
+su -c '/data/adb/modules/play-detach/play-detach autobackup off'
+su -c '/data/adb/modules/play-detach/play-detach autodetach on'
+su -c '/data/adb/modules/play-detach/play-detach autoskip add com.aurora.store'
+su -c '/data/adb/modules/play-detach/play-detach history'
+su -c '/data/adb/modules/play-detach/play-detach help'
 ```
+
+The list is stored in `/data/adb/play-detach/detach.list`, one package per line. Each time the Play Store starts, the module overwrites a one-line `status` file in the same folder with the time (the self-check result is saved next to it in `hook`), which `play-detach status` and the WebUI use to show whether the current list is active.
+
+A small background script (`service.sh`) sleeps on Linux inotify events (busybox or toybox `inotifyd`, with a 3 second check as a fallback) and notices new apps and Play Store updates, so it does no work while nothing changes. With `autodetach on`, new apps installed from outside the Play Store are detached right away; apps restored by a backup app are left alone.
+
+Backups go to `/sdcard/Play-Detach`, which the installer creates (or to `Download` if that folder was deleted). After every change the list is also saved there as `play-detach-auto.txt`.
+
+To check that the module works:
+
+```
+su -c 'logcat -d -s PlayDetach'
+```
+
+A line with `active in Play Store` means it is running.
+
+## How it works
+
+The module loads only into the Play Store process. A hook on `IPCThreadState::transact` in `libbinder.so` watches the Play Store's binder calls. When the Play Store asks the PackageManager (`getApplicationEnabledSetting`) about a detached app, the package name in the request is blanked, so the system answers that the app does not exist and the Play Store never offers an update for it.
+
+Every read from the binder data is bounds-checked. If the data does not look exactly as expected, for example after a change in a new Android version, the call is passed through untouched and the reason is written to logcat.
+
+## Building from source
+
+Requirements: Linux or WSL, [Android NDK](https://developer.android.com/ndk/downloads) (r29 tested) and `zip`.
+
+```
+git clone https://github.com/nikakvo/play-detach
+cd play-detach
+ANDROID_NDK_HOME=/path/to/android-ndk-r29 ./build.sh
+```
+
+The module zip is written to `out/`. Without `ANDROID_NDK_HOME`, `build.sh` looks for the NDK in `~/android-ndk-r29`.
+
+| Part | Source | Built with |
+|---|---|---|
+| Zygisk library | `src/zygisk/` | C++20, NDK r29, arm64-v8a, Zygisk API v4, no third-party libraries |
+| Command line tool | `module/play-detach` | POSIX shell |
+| WebUI | `module/webroot/` | Plain HTML, CSS and JavaScript, no build step, bundled fonts; texts in `i18n.js` (English and Russian) |
+| Banner | `module/banner.png` | Drawn from `src/banner.svg` |
+
+## Tested on
+
+- Poco F6 Pro, Xiaomi.eu ROM (Android 16), SukiSU-Ultra and ReZygisk
+- Xiaomi Redmi Note 8T, InfinityX ROM (Android 17), BakaSU and Zygisk Next (tested by [LegacyFreeman](https://github.com/LegacyFreeman))
+
+## Credits
+
+Play Detach is made by [Tears Burn](https://github.com/nikakvo). It is a rewrite of [zygisk-detach](https://github.com/j-hc/zygisk-detach) by [j-hc](https://github.com/j-hc). The detach technique comes from that project. See `NOTICE` and `THIRD_PARTY_NOTICES.md`.
+
+Russian translation based on the work of [LegacyFreeman](https://github.com/LegacyFreeman).
+
+## License
+
+Apache License 2.0, see `LICENSE`.
