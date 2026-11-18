@@ -237,6 +237,9 @@ check "release: API reads are still retried" reads_retried "$W/token"
 # tester (no uid change), and the stub never runs "kill -9 -1". build() in
 # module-ci.conf plays the untrusted build: it leaves files in $OUT the way
 # build code could. After the build root must follow no link in $OUT.
+# Build mode runs only inside a container and only when asked for
+# (PD_TEST_BUILD_MODE=1): with the real setpriv on PATH it would kill every
+# process of the build uid, which on a workstation is the tester.
 cat >"$STUBS/setpriv" <<'EOF2'
 #!/bin/sh
 # setpriv stub: drops the options and runs the command as is, except kill
@@ -272,7 +275,9 @@ build_case() {
 not_in_desc() {
     ! grep -qs "secret line" "$1/work/.ci-out/desc" "$1/work/.ci-out.old/desc"
 }
-if [ "$(PATH="$STUBS:$PATH" command -v setpriv)" = "$STUBS/setpriv" ]; then
+if [ "${PD_TEST_BUILD_MODE:-}" != 1 ] || [ ! -f /.dockerenv ]; then
+    echo "skip build step (only in a container with PD_TEST_BUILD_MODE=1)"
+elif [ "$(PATH="$STUBS:$PATH" command -v setpriv)" = "$STUBS/setpriv" ]; then
     build_case plain 'printf x >"$OUT/module.zip"; echo "upstream 1.0" >"$OUT/upstream-desc"'
     check "build: exit 0" [ "$RC" = 0 ]
     [ "$RC" = 0 ] || sed 's/^/    /' "$D/log"
