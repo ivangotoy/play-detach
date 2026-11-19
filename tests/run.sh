@@ -415,6 +415,20 @@ com.example.inst2" ]
     check "status, no space: no temporary file left" [ -z "$(ls "$PD_DATA_DIR" | grep '\.tmp\.')" ]
     pd scan
     check "scan after a full /data: only the new app detached" list_is com.example.new
+    # A shell that keeps a here-document in a temporary file (mksh) cannot
+    # write it on a full /data: the names must not be lost on the way
+    fresh
+    pd add com.example.app
+    printf 'com.example.other\ncom.example.more\n' >"$C/in.txt"
+    # (output to /dev/null: a failed write of the output would end it with 1)
+    nospace_rc() {
+        (trap '' XFSZ && ulimit -f 0 && PATH="$STUBS:$PATH" PD_BB=1 "$SH" "$ROOT/module/play-detach" "$@" >/dev/null 2>&1
+            echo $?)
+    }
+    check "restore, no space: exit 1" [ "$(nospace_rc restore "$C/in.txt")" = 1 ]
+    check "restore, no space: list kept" list_is com.example.app
+    pd clear
+    check "import into an empty list, no space: exit 1" [ "$(nospace_rc import "$C/in.txt")" = 1 ]
 else
     skipped "full /data (no ulimit -f or trap XFSZ)"
 fi
