@@ -757,9 +757,9 @@ check "install: abort on non-arm64" grep -q '^ABORT: ! Only arm64' "$C/install.l
 # The fork releases above the upstream build it replaces, so root managers
 # offer it as an update: released versionCode = module.prop's + offset
 off=$(sed -n 's/^VERSION_CODE_OFFSET=//p' "$ROOT/.forgejo/module-ci.conf")
-# 3: the fork already released versionCode 14 (module.prop 12 + 2), so the
+# 4: the fork already released versionCode 15 (module.prop 12 + 3), so the
 # next release of the same upstream version must be above that
-check "module-ci.conf: release versionCode above the last fork release" [ "${off:-0}" -ge 3 ]
+check "module-ci.conf: release versionCode above the last fork release" [ "${off:-0}" -ge 4 ]
 
 if have bash && have git && have python3 && have unzip && have sha256sum; then
     mkdir -p "$WORK/release" "$STUBS/release"
