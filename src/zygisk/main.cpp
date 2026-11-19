@@ -191,8 +191,7 @@ void writeStatus(size_t count) {
     if (fd < 0) return;
     bool ok = writeAll(fd, line, static_cast<size_t>(len));
     close(fd);
-    if (ok) rename(tmp, kStatusPath);
-    else unlink(tmp);
+    if (!ok || rename(tmp, kStatusPath) != 0) unlink(tmp);
 }
 
 // Runs as root in the Zygisk companion daemon. Protocol: uint32 size, then
