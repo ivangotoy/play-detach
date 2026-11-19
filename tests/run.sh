@@ -297,6 +297,9 @@ PATH="$STUBS:$PATH" PD_BB=1 PD_TEST_SORT_FLAG=$C/a \
 apid=$!
 i=0
 while [ ! -e "$C/a.reached" ] && [ $i -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
+# A that did not take the lock over must not stop later: it may get the
+# lock right after B removes the stale one, and B would then wait for it
+[ -e "$C/a.reached" ] || "$REAL_RM" -f "$C/a.wait"
 "$REAL_RM" -f "$C/b.wait"
 wait $bpid
 "$REAL_RM" -f "$C/a.wait"
