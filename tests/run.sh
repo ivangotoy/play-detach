@@ -381,6 +381,15 @@ while [ $i -lt 3000 ]; do echo "com.example.app$i.longername.padding.abcdefghijk
 pd add $(cat "$C/big.txt")
 check "add of a list over 128 KB: exit 1" [ $? = 1 ]
 check "add of a list over 128 KB: list kept" list_is com.example.keep
+fresh
+pd autoskip add com.example.inst
+pd autoskip add com.example.inst2
+PD_TEST_SORT_FAIL=1 pd autoskip add com.example.more
+check "autoskip add, failed sort: exit 1" [ $? = 1 ]
+PD_TEST_SORT_FAIL=1 pd autoskip remove com.example.inst2
+check "autoskip remove, failed sort: exit 1" [ $? = 1 ]
+check "autoskip, failed sort: list kept" [ "$(cat "$PD_DATA_DIR/auto-skip")" = "com.example.inst
+com.example.inst2" ]
 
 # import / backup / restore
 fresh
