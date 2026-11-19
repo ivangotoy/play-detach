@@ -128,13 +128,15 @@ case "$1" in
 esac
 EOF
 
-# rm and sort that can stop at a chosen moment, to stage a race: while
-# <flag>.wait exists they wait (at most 30 s) after making <flag>.reached.
-# rm stops only for the path in PD_TEST_RM_BLOCK (flag PD_TEST_RM_FLAG),
+# rm, rmdir and sort that can stop at a chosen moment, to stage a race:
+# while <flag>.wait exists they wait (at most 30 s) after writing their pid
+# to <flag>.reached. rm stops only for the path in PD_TEST_RM_BLOCK (flag
+# PD_TEST_RM_FLAG), rmdir only for PD_TEST_RMDIR_BLOCK (PD_TEST_RMDIR_FLAG),
 # sort only when PD_TEST_SORT_FLAG is set.
 REAL_RM=$(command -v rm)
+REAL_RMDIR=$(command -v rmdir)
 REAL_SORT=$(command -v sort)
-hold() { printf ': >"$1.reached"; i=0; while [ -e "$1.wait" ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done\n'; }
+hold() { printf 'echo $$ >"$1.reached"; i=0; while [ -e "$1.wait" ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done\n'; }
 {
     echo '#!/bin/sh'
     echo 'if [ -n "$PD_TEST_RM_BLOCK" ]; then for a; do [ "$a" = "$PD_TEST_RM_BLOCK" ] && {'
@@ -147,6 +149,13 @@ hold() { printf ': >"$1.reached"; i=0; while [ -e "$1.wait" ] && [ $i -lt 300 ];
     echo 'fi; done; fi'
     echo "exec $REAL_RM \"\$@\""
 } >"$STUBS/rm"
+{
+    echo '#!/bin/sh'
+    echo 'if [ -n "$PD_TEST_RMDIR_BLOCK" ]; then for a; do [ "$a" = "$PD_TEST_RMDIR_BLOCK" ] && {'
+    hold | sed 's/\$1/$PD_TEST_RMDIR_FLAG/g'
+    echo 'break; }; done; fi'
+    echo "exec $REAL_RMDIR \"\$@\""
+} >"$STUBS/rmdir"
 # mkdir that, once the installer's staging folder is made, moves it to
 # PD_TEST_MKDIR_TO and leaves a link to it, as a racing owner of the folder could
 REAL_MKDIR=$(command -v mkdir)
@@ -188,7 +197,7 @@ if [ -n "\$PD_TEST_MV_LOG" ]; then
 fi
 exec $REAL_MV "\$@"
 EOF
-chmod 755 "$STUBS/rm" "$STUBS/sort" "$STUBS/chmod" "$STUBS/mv"
+chmod 755 "$STUBS/rm" "$STUBS/rmdir" "$STUBS/sort" "$STUBS/chmod" "$STUBS/mv"
 
 # A fresh fake phone for one test case
 fresh() {
@@ -296,6 +305,53 @@ check "stale list lock, two waiters: B stopped before the takeover" [ -e "$C/b.r
 check "stale list lock, two waiters: no change lost" list_is "com.example.a
 com.example.b"
 check "stale list lock, two waiters: no lock left" sh -c '[ ! -e "$1" ] && [ ! -e "$1.takeover" ]' sh "$L"
+
+# A command killed while taking a stale lock over leaves its takeover
+# behind. Two waiters then: B stops right before it would remove that old
+# takeover; A takes the lock over and stops right before removing the stale
+# lock; B goes on and stops inside the list change if it gets the lock; then
+# A goes on. A takeover must never remove a lock another command holds, so
+# neither change is lost. (Each wait below ends early when its stop is
+# reached or the command ended.)
+fresh
+L=$PD_DATA_DIR/list.lock
+mkdir "$L"
+touch -t 200001010000 "$L"
+: >"$C/k.wait"
+PATH="$STUBS:$PATH" PD_BB=1 PD_TEST_RM_BLOCK=$L PD_TEST_RM_FLAG=$C/k \
+    "$SH" "$ROOT/module/play-detach" add com.example.k >"$C/k.out" 2>&1 &
+kpid=$!
+i=0
+while [ ! -s "$C/k.reached" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+kill -9 "$kpid" "$(cat "$C/k.reached")" 2>/dev/null
+wait "$kpid" 2>/dev/null
+"$REAL_RM" -f "$C/k.wait"
+for g in "$L".takeover*; do [ -e "$g" ] && touch -t 200001010000 "$g"; done
+: >"$C/b.wait"
+: >"$C/bs.wait"
+: >"$C/a.wait"
+PATH="$STUBS:$PATH" PD_BB=1 PD_TEST_RMDIR_BLOCK=$L.takeover PD_TEST_RMDIR_FLAG=$C/b PD_TEST_SORT_FLAG=$C/bs \
+    "$SH" "$ROOT/module/play-detach" add com.example.b >"$C/b.out" 2>&1 &
+bpid=$!
+i=0
+while [ ! -e "$C/b.reached" ] && [ ! -e "$C/bs.reached" ] && kill -0 "$bpid" 2>/dev/null && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+PATH="$STUBS:$PATH" PD_BB=1 PD_TEST_RM_BLOCK=$L PD_TEST_RM_FLAG=$C/a \
+    "$SH" "$ROOT/module/play-detach" add com.example.a >"$C/a.out" 2>&1 &
+apid=$!
+i=0
+while [ ! -e "$C/a.reached" ] && kill -0 "$apid" 2>/dev/null && [ $i -lt 20 ]; do sleep 0.1; i=$((i + 1)); done
+"$REAL_RM" -f "$C/b.wait"
+i=0
+while [ ! -e "$C/bs.reached" ] && kill -0 "$bpid" 2>/dev/null && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+"$REAL_RM" -f "$C/a.wait"
+i=0
+while kill -0 "$apid" 2>/dev/null && [ $i -lt 20 ]; do sleep 0.1; i=$((i + 1)); done
+"$REAL_RM" -f "$C/bs.wait"
+wait $bpid
+wait $apid
+check "killed takeover, two waiters: no change lost" list_is "com.example.a
+com.example.b"
+check "killed takeover, two waiters: no lock left" [ -z "$(ls -a "$PD_DATA_DIR" | grep '^list\.lock')" ]
 
 # import / backup / restore
 fresh

@@ -155,22 +155,27 @@ take_lock() {
     tries=$2
     mkdir -p "$DATA_DIR" 2>/dev/null
     while ! mkdir "$l" 2>/dev/null; do
-        now=$(date +%s)
-        age=$((now - $(stat -c %Y "$l" 2>/dev/null || echo "$now")))
-        if [ "$age" -gt "$3" ]; then
-            # One waiter at a time takes a stale lock over, and only after
-            # reading its age again: another waiter may have taken it over
-            # and made a new lock since the age above was read.
-            if mkdir "$l.takeover" 2>/dev/null; then
-                now=$(date +%s)
-                age=$((now - $(stat -c %Y "$l" 2>/dev/null || echo "$now")))
-                [ "$age" -le "$3" ] || rm -rf "$l"
-                rmdir "$l.takeover"
+        # inode.time names this lock: a lock made after it has another one
+        id=$(stat -c %i.%Y "$l" 2>/dev/null)
+        if [ -n "$id" ] && [ $(($(date +%s) - ${id#*.})) -gt "$3" ]; then
+            # One waiter at a time takes a stale lock over: the one that
+            # makes its takeover folder, which is named after the lock, and
+            # only while the lock is still that one. No waiter removes a
+            # takeover folder another one may use (it could be a new one):
+            # inside one older than $3 seconds, left by a killed command, the
+            # next one is made. The waiter that removes the lock removes them.
+            g="$l.takeover.$id"
+            while [ -d "$g" ] && [ $(($(date +%s) - $(stat -c %Y "$g" 2>/dev/null || date +%s))) -gt "$3" ]; do
+                g="$g/x"
+            done
+            if mkdir "$g" 2>/dev/null; then
+                if [ "$(stat -c %i.%Y "$l" 2>/dev/null)" = "$id" ]; then
+                    rm -rf "$l" "$l.takeover.$id"
+                else
+                    rmdir "$g"
+                fi
                 continue
             fi
-            # A takeover left behind by a killed command
-            age=$((now - $(stat -c %Y "$l.takeover" 2>/dev/null || echo "$now")))
-            [ "$age" -le "$3" ] || rmdir "$l.takeover" 2>/dev/null
         fi
         [ "$tries" -gt 0 ] || return 1
         tries=$((tries - 1))
