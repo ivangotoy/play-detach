@@ -180,6 +180,8 @@ exec $REAL_CHMOD "\$@"
 EOF
 {
     echo '#!/bin/sh'
+    # PD_TEST_SORT_FAIL: a sort that fails (killed, no memory) with no output
+    echo '[ -n "$PD_TEST_SORT_FAIL" ] && { cat >/dev/null; exit 1; }'
     echo 'if [ -n "$PD_TEST_SORT_FLAG" ]; then'
     hold | sed 's/\$1/$PD_TEST_SORT_FLAG/g'
     echo 'fi'
@@ -355,6 +357,20 @@ wait $apid
 check "killed takeover, two waiters: no change lost" list_is "com.example.a
 com.example.b"
 check "killed takeover, two waiters: no lock left" [ -z "$(ls -a "$PD_DATA_DIR" | grep '^list\.lock')" ]
+
+# A failed sort must keep the list and seen.list (its status was lost
+# behind the cat that checks the write)
+fresh
+pd add com.example.keep
+export PD_TEST_SORT_FAIL=1
+pd add com.example.new
+check "add, failed sort: exit 1" [ $? = 1 ]
+check "add, failed sort: list kept" list_is com.example.keep
+printf 'com.example.old\n' >"$PD_DATA_DIR/seen.list"
+printf 'package:com.example.new  installer=com.google.android.packageinstaller\n' >"$PD_TEST_PM"
+pd scan
+unset PD_TEST_SORT_FAIL
+check "scan, failed sort: seen.list kept" [ "$(cat "$PD_DATA_DIR/seen.list")" = com.example.old ]
 
 # import / backup / restore
 fresh

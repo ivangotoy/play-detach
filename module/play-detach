@@ -225,8 +225,10 @@ write_list() {
     mkdir -p "$DATA_DIR" || die "cannot create $DATA_DIR"
     chmod 700 "$DATA_DIR"
     tmp="$LIST.tmp.$$"
-    # cat reports a failed write (busybox sort does not for one line)
-    sort -u | cat >"$tmp" || {
+    # sort's own status is checked first (a failed sort must not empty the
+    # list), then cat reports a failed write (busybox sort does not for one line)
+    sorted=$(sort -u) || die "cannot sort the list"
+    { [ -z "$sorted" ] || printf '%s\n' "$sorted"; } | cat >"$tmp" || {
         rm -f "$tmp"
         die "cannot write $tmp"
     }
@@ -483,7 +485,8 @@ scan_apps() {
     # time to see that the app list changed.
     # A failed write (full /data) must not replace the list: nothing is
     # done until the current apps can be remembered.
-    lines_of "$cur" | cut -d' ' -f1 | sed '/^$/d' | sort -u | cat >"$SEEN.tmp.$$" || {
+    seen=$(lines_of "$cur" | cut -d' ' -f1 | sed '/^$/d' | sort -u) || return 1
+    { [ -z "$seen" ] || printf '%s\n' "$seen"; } | cat >"$SEEN.tmp.$$" || {
         rm -f "$SEEN.tmp.$$"
         return 1
     }
