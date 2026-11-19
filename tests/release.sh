@@ -64,7 +64,9 @@ case "$m $url" in
         cp "$upload" "$S/asset.zip" && say '{"id": 9}' ;;
     "GET $api/releases/7/assets/9")
         say "{\"browser_download_url\": \"$web/releases/download/$(cat "$S/tag")\"}" ;;
-    "PATCH $api/releases/7") touch "$S/published"; say '{}' ;;
+    "GET $api/releases/7")
+        if [ -f "$S/published" ]; then say '{"id": 7, "draft": false}'; else say '{"id": 7, "draft": true}'; fi ;;
+    "PATCH $api/releases/7") touch "$S/published"; [ "$CURL_FAIL" = publishlost ] && exit 28; say '{}' ;;
     "DELETE $api/releases/7") touch "$S/deleted"; say '{}' ;;
     "GET $web/releases/download/"*)
         if [ "$CURL_FAIL" = back ]; then echo corrupt >"$out"; else cp "$S/asset.zip" "$out"; fi ;;
@@ -214,6 +216,10 @@ check "failed release: draft deleted" [ -f "$D/state/deleted" ]
 check "failed release: token in no curl or git argv" no_token_in_argv "$D"
 check "failed release: draft DELETE sends the header from a file" api_auth_from_file "$D" DELETE
 check "failed release: header file 0600 and removed" header_file_0600_and_gone "$D"
+# the forge applied the publish PATCH but its reply was lost: the release stays
+release_case lost v1.0 publishlost
+check "publish reply lost: exit 1" [ "$RC" != 0 ]
+check "publish reply lost: published release not deleted" [ ! -f "$D/state/deleted" ]
 
 # Every curl call is time-limited, and only reads are retried (a retried
 # POST/PATCH/DELETE can repeat a change the forge already made)
