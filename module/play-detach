@@ -225,10 +225,11 @@ write_list() {
     mkdir -p "$DATA_DIR" || die "cannot create $DATA_DIR"
     chmod 700 "$DATA_DIR"
     tmp="$LIST.tmp.$$"
-    # sort's own status is checked first (a failed sort must not empty the
-    # list), then cat reports a failed write (busybox sort does not for one line)
-    sorted=$(sort -u) || die "cannot sort the list"
-    { [ -z "$sorted" ] || printf '%s\n' "$sorted"; } | cat >"$tmp" || {
+    # A failed sort and a failed write are both reported on fd 3: cat reports
+    # a failed write (busybox sort does not for one line), and the text never
+    # becomes a command argument (too long for an external printf).
+    st=$({ { sort -u || echo sort >&3; } | cat >"$tmp" || echo write >&3; } 3>&1)
+    [ -z "$st" ] || {
         rm -f "$tmp"
         die "cannot write $tmp"
     }
@@ -485,8 +486,9 @@ scan_apps() {
     # time to see that the app list changed.
     # A failed write (full /data) must not replace the list: nothing is
     # done until the current apps can be remembered.
-    seen=$(lines_of "$cur" | cut -d' ' -f1 | sed '/^$/d' | sort -u) || return 1
-    { [ -z "$seen" ] || printf '%s\n' "$seen"; } | cat >"$SEEN.tmp.$$" || {
+    st=$({ { lines_of "$cur" | cut -d' ' -f1 | sed '/^$/d' | sort -u || echo sort >&3; } |
+        cat >"$SEEN.tmp.$$" || echo write >&3; } 3>&1)
+    [ -z "$st" ] || {
         rm -f "$SEEN.tmp.$$"
         return 1
     }

@@ -371,6 +371,16 @@ printf 'package:com.example.new  installer=com.google.android.packageinstaller\n
 pd scan
 unset PD_TEST_SORT_FAIL
 check "scan, failed sort: seen.list kept" [ "$(cat "$PD_DATA_DIR/seen.list")" = com.example.old ]
+# A list text longer than one command argument may be (an external printf
+# in mksh) must still reach the size check, never an empty list
+fresh
+pd add com.example.keep
+i=0
+while [ $i -lt 3000 ]; do echo "com.example.app$i.longername.padding.abcdefghijkl"; i=$((i + 1)); done >"$C/big.txt"
+# shellcheck disable=SC2046 # one argument per name
+pd add $(cat "$C/big.txt")
+check "add of a list over 128 KB: exit 1" [ $? = 1 ]
+check "add of a list over 128 KB: list kept" list_is com.example.keep
 
 # import / backup / restore
 fresh
