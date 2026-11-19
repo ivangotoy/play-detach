@@ -429,6 +429,18 @@ com.example.inst2" ]
     check "restore, no space: list kept" list_is com.example.app
     pd clear
     check "import into an empty list, no space: exit 1" [ "$(nospace_rc import "$C/in.txt")" = 1 ]
+    # busybox sort exits 0 when it cannot write a single line of output
+    fresh
+    check "first add, no space: exit 1" [ "$(nospace_rc add com.example.a)" = 1 ]
+    pd add com.example.a com.example.b
+    check "remove leaving one name, no space: exit 1" [ "$(nospace_rc remove com.example.b)" = 1 ]
+    check "remove leaving one name, no space: list kept" list_is "com.example.a
+com.example.b"
+    printf 'package:com.example.oldside  installer=com.google.android.packageinstaller\n' >"$PD_TEST_PM"
+    pd autodetach on
+    printf 'package:com.example.new  installer=com.google.android.packageinstaller\n' >"$PD_TEST_PM"
+    nospace scan
+    check "scan of one app, no space: seen.list kept" [ "$(cat "$PD_DATA_DIR/seen.list")" = com.example.oldside ]
 else
     skipped "full /data (no ulimit -f or trap XFSZ)"
 fi
