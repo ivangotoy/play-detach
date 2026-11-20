@@ -109,8 +109,10 @@ if [ "$MODE" = build ]; then
             SERVER_URL="$SERVER_URL" REPOSITORY="$REPOSITORY" BASE_SHA="$BASE_SHA" OUT="$OUT"
         exec env ${drop[@]+"${drop[@]}"} setpriv --reuid="$BUILD_UID" --regid="$BUILD_UID" --clear-groups \
             bash "$WORK/.forgejo/module-ci.sh" build-user "$WORK"
-    ) || die "build failed"
+    ) || build_rc=$?
+    # nothing the build user started outlives the build, whether it failed or not
     setpriv --reuid="$BUILD_UID" --regid="$BUILD_UID" --clear-groups kill -9 -1 2>/dev/null || true
+    [ "${build_rc:-0}" = 0 ] || die "build failed"
     # $OUT belongs to the build user: root follows no link in it (a planted link would make
     # root read or overwrite any file) and reads only a file with a single name
     [ -d "$OUT" ] && [ ! -L "$OUT" ] || die "$OUT is not a directory"

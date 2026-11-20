@@ -247,7 +247,7 @@ check "release: every git call has a stall limit" git_stall_limited "$W/token"
 check "failed release: every git call has a stall limit" git_stall_limited "$W/tokenfail"
 
 # Build step, offline. setpriv and chown are stubs: the build runs as the
-# tester (no uid change), and the stub never runs "kill -9 -1". build() in
+# tester (no uid change), and the stub records "kill -9 -1" and never runs it. build() in
 # module-ci.conf plays the untrusted build: it leaves files in $OUT the way
 # build code could. After the build root must follow no link in $OUT.
 # Build mode runs only inside a container and only when asked for
@@ -256,8 +256,8 @@ check "failed release: every git call has a stall limit" git_stall_limited "$W/t
 cat >"$STUBS/setpriv" <<'EOF2'
 #!/bin/sh
 # setpriv stub: drops the options and runs the command as is, except kill
+case " $* " in *" kill "*) echo "kill-requested $*" >>"$SETPRIV_LOG"; exit 0 ;; esac
 while [ $# -gt 0 ]; do case "$1" in --*) shift ;; *) break ;; esac; done
-[ "$1" = kill ] && exit 0
 exec "$@"
 EOF2
 printf '#!/bin/sh\nexit 0\n' >"$STUBS/chown"
@@ -278,9 +278,10 @@ build_case() {
     git -C "$d/work" init -q -b main
     git -C "$d/work" add -A
     git -C "$d/work" commit -qm seed
+    : >"$d/setpriv.log"
     (
         cd "$d" &&
-            PATH="$STUBS:$PATH" SERVER_URL=https://forge.example.invalid REPOSITORY=$REPOSITORY \
+            PATH="$STUBS:$PATH" SETPRIV_LOG="$d/setpriv.log" SERVER_URL=https://forge.example.invalid REPOSITORY=$REPOSITORY \
                 BASE_SHA="$(git -C "$d/work" rev-parse HEAD)" \
                 env "$@" timeout 120 bash "$d/work/.forgejo/module-ci.sh" build "$d/work"
     ) >"$d/log" 2>&1
@@ -302,6 +303,12 @@ elif [ "$(PATH="$STUBS:$PATH" command -v setpriv)" = "$STUBS/setpriv" ]; then
     check "build: the build user gets no git stall limit" not_in_env "$D" GIT_HTTP_LOW_SPEED_
     check "build: build() gets no git stall limit" sh -c '[ -s "$1" ] && ! grep -q "^GIT_HTTP_LOW_SPEED_" "$1"' sh "$D/work/.ci-out/env.build"
     check "build: desc from upstream-desc" [ "$(cat "$D/work/.ci-out/desc")" = "upstream 1.0" ]
+    check "build: the build user's processes are killed after the build" grep -q -e '^kill-requested .*--reuid=1000 .*kill -9 -1' "$D/setpriv.log"
+    # a failed build: whatever the build user started is killed before the script stops
+    build_case failed 'echo "example build failure" >&2; return 1'
+    check "build failed: exit non-zero with the build's error" \
+        sh -c '[ "$1" != 0 ] && grep -q "example build failure" "$2" && ! grep -q "unbound variable" "$2"' sh "$RC" "$D/log"
+    check "build failed: the build user's processes are killed too" grep -q -e '^kill-requested .*--reuid=1000 .*kill -9 -1' "$D/setpriv.log"
     # The build step's own helper names must not let an exported variable
     # of the same name (or readonly SHELLOPTS) through to the build user
     build_case names 'printf x >"$OUT/module.zip"; tr "\\0" "\\n" </proc/$$/environ >"$OUT/env"' \
