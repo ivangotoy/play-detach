@@ -59,7 +59,7 @@ case "$m $url" in
     "GET $api/releases/tags/"* | "GET $api/tags/"*)
         if [ -n "$w" ]; then printf 404; exit 0; fi
         say "{\"commit\": {\"sha\": \"$(cat "$S/base")\"}}" ;;
-    "POST $api/releases") say '{"id": 7}' ;;
+    "POST $api/releases") [ "$CURL_FAIL" = draftlost ] && exit 28; say '{"id": 7}' ;;
     "POST $api/releases/7/assets?name="*)
         cp "$upload" "$S/asset.zip" && say '{"id": 9}' ;;
     "GET $api/releases/7/assets/9")
@@ -95,10 +95,11 @@ exec "$REAL_GIT" "\$@"
 EOF
 chmod 755 "$STUBS/git"
 
-# release_case <name> <built version> [side|back]: a forge repo with a
+# release_case <name> <built version> [side|back|publishlost|draftlost]: a forge repo with a
 # fork-owned module.prop (SYNC_ROOT_PROP), a built zip with that version, one
 # release run. With "side" the dispatched commit is on a branch other than
-# main; with "back" the asset downloaded back is corrupt (fails after the draft).
+# main; with "back" the asset downloaded back is corrupt (fails after the draft);
+# with "publishlost" or "draftlost" the publish or draft request gets no reply.
 release_case() {
     local built=$2 d="$W/$1"
     rm -rf "$d"
@@ -220,6 +221,13 @@ check "failed release: header file 0600 and removed" header_file_0600_and_gone "
 release_case lost v1.0 publishlost
 check "publish reply lost: exit 1" [ "$RC" != 0 ]
 check "publish reply lost: published release not deleted" [ ! -f "$D/state/deleted" ]
+# the draft request failed or the forge made the draft and the reply was lost: no id to delete by
+release_case draftlost v1.0 draftlost
+check "draft reply lost: exit 1" [ "$RC" != 0 ]
+check "draft reply lost: one draft request, nothing deleted or published" \
+    sh -c '[ "$(awk -F"\t" -v u="$2" "\$1 == \"POST\" && \$2 == u" "$1/state/calls.tsv" | wc -l)" = 1 ] && [ ! -f "$1/state/deleted" ] && [ ! -f "$1/state/published" ]' \
+    sh "$D" "$D/forge/api/v1/repos/$REPOSITORY/releases"
+check "draft reply lost: tag logged for a check by hand" grep -qF "the draft request for $TAG failed or its reply was lost" "$D/log"
 
 # Every curl call is time-limited, and only reads are retried (a retried
 # POST/PATCH/DELETE can repeat a change the forge already made)

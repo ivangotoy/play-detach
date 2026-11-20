@@ -7,8 +7,9 @@
 #                                   draft -> upload -> download back and verify ->
 #                                   push merge -> publish -> commit update.json
 # The release step runs this script and the config as fetched from the dispatched
-# commit, never the copies in the build workspace. Any failure before publish
-# deletes the draft. The merge with upstream is pushed to main right before the
+# commit, never the copies in the build workspace. A failure before publish
+# deletes the draft once the forge confirms it is still one (a lost reply to the
+# draft request is logged instead). The merge with upstream is pushed to main right before the
 # publish call, so a failure before that push pushes nothing, and a failed
 # publish leaves the merge on main (without a release).
 #
@@ -248,9 +249,13 @@ unzip -tq "$ZIP" >/dev/null || die "zip test failed"
 ZIP_SHA="$(sha "$ZIP")"
 log "zip $ZIP_NAME sha256 $ZIP_SHA"
 
-RELEASE_ID="" PUBLISHED=0
+RELEASE_ID="" PUBLISHED=0 DRAFT_REQUESTED=0
 cleanup() {
     rc=$?
+    if [ "$rc" -ne 0 ] && [ -z "$RELEASE_ID" ] && [ "$DRAFT_REQUESTED" = 1 ]; then
+        # a rejected request, or one the forge applied with its reply lost: no id to delete by
+        log "failure: the draft request for $TAG failed or its reply was lost; the forge may hold that draft: check it by hand"
+    fi
     if [ "$rc" -ne 0 ] && [ -n "$RELEASE_ID" ] && [ "$PUBLISHED" != 1 ]; then
         # a publish PATCH whose reply was lost may still have been applied: delete only a confirmed draft
         draft="$(api GET "/releases/$RELEASE_ID" | jget draft || true)"
@@ -272,6 +277,7 @@ trap cleanup EXIT
 BODY="$(printf 'Built by module-release #%s from %s (%s).\nversionCode %s\nsha256 %s  %s\nupdateJson %s' \
     "$RUN_NUMBER" "${SRC_SHA:0:12}" "${DESC:-fork main}" "$VC" "$ZIP_SHA" "$ZIP_NAME" "$UPDATE_URL")"
 REQ="$(python3 -I -c 'import json,sys;print(json.dumps({"tag_name":sys.argv[1],"target_commitish":"main","name":sys.argv[2],"body":sys.argv[3],"draft":True}))' "$TAG" "$ZIP_PREFIX $VERSION" "$BODY")"
+DRAFT_REQUESTED=1
 RELEASE_ID="$(api POST /releases -H 'Content-Type: application/json' -d "$REQ" | jget id)"
 log "draft release $RELEASE_ID, uploading $ZIP_NAME"
 ASSET_ID="$(api POST "/releases/$RELEASE_ID/assets?name=$ZIP_NAME" -F "attachment=@$ZIP" | jget id)"
