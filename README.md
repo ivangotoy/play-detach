@@ -110,3 +110,7 @@ Russian translation based on the work of [LegacyFreeman](https://github.com/Lega
 ## License
 
 Apache License 2.0, see `LICENSE`.
+
+## More KernelSU modules
+
+Check out my other great KernelSU modules here: https://git.digtvbg.com/explore/repos?q=kernelsu-module&topic=1
