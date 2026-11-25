@@ -277,8 +277,9 @@ write_list() {
     }
 }
 
+# A Play-Detach that is a link is not the installer's folder: not used.
 backup_dir() {
-    if [ -d "$BACKUP_DIR" ]; then echo "$BACKUP_DIR"; else echo "$STORAGE/Download"; fi
+    if [ -d "$BACKUP_DIR" ] && [ ! -L "$BACKUP_DIR" ]; then echo "$BACKUP_DIR"; else echo "$STORAGE/Download"; fi
 }
 
 # Saves the current list to a file. Prints an error and returns 1 on failure.
@@ -327,6 +328,8 @@ save_backup() {
 auto_backup() {
     [ -f "$DATA_DIR/no-auto-backup" ] && return 0
     [ "$(read_list | wc -l)" -gt 0 ] || return 0
+    # nobody asked for this file: never through a linked folder
+    [ ! -L "$(backup_dir)" ] || return 0
     save_backup "$(backup_dir)/$AUTO_NAME" 2>/dev/null
     return 0
 }

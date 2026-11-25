@@ -153,7 +153,7 @@ if [ -d "$STORAGE/Download" ]; then
         rm -rf "$stage"
     fi
     # First automatic backup of an existing list
-    if [ -d "$BDIR" ] && [ -s "$DATA_DIR/detach.list" ] && [ ! -f "$DATA_DIR/no-auto-backup" ]; then
+    if [ -d "$BDIR" ] && [ ! -L "$BDIR" ] && [ -s "$DATA_DIR/detach.list" ] && [ ! -f "$DATA_DIR/no-auto-backup" ]; then
         "$MODPATH/play-detach" backup "$BDIR/play-detach-auto.txt" >/dev/null 2>&1 &&
             ui_print "$(m "- Detached apps saved to Play-Detach/play-detach-auto.txt" "- Откреплённые приложения сохранены в Play-Detach/play-detach-auto.txt" "- 已分离的应用已保存到 Play-Detach/play-detach-auto.txt")"
     fi

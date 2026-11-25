@@ -985,6 +985,22 @@ mkdir "$C/victimdir"
     install_module
 )
 check "install: backup folder swapped for a link before chmod: folder behind it keeps its mode" [ "$(stat -c %a "$C/victimdir")" = 700 ]
+# A Play-Detach folder that is a link (worker decision: not used): no
+# backup is written behind it, by the installer or automatically
+fresh
+"$REAL_RM" -rf "$PD_STORAGE/Play-Detach"
+mkdir "$C/victimdir"
+ln -s "$C/victimdir" "$PD_STORAGE/Play-Detach"
+printf 'com.example.app\n' >"$C/detach.txt"
+install_module
+check "install: Play-Detach as a link: no backup behind it" [ -z "$(ls -A "$C/victimdir")" ]
+pd add com.example.b
+check "add: Play-Detach as a link: no automatic backup behind it" [ -z "$(ls -A "$C/victimdir")" ]
+check "add: Play-Detach as a link: automatic backup in Download" grep -qx com.example.b "$PD_STORAGE/Download/play-detach-auto.txt"
+"$REAL_RM" -rf "$PD_STORAGE/Play-Detach" "$PD_STORAGE/Download"
+ln -s "$C/victimdir" "$PD_STORAGE/Download"
+pd add com.example.c
+check "add: Download as a link: no automatic backup behind it" [ -z "$(ls -A "$C/victimdir")" ]
 # A link planted at the installer's staging folder name (install_module
 # runs it in a subshell of this script, so its $$ is ours)
 fresh
