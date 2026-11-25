@@ -309,7 +309,7 @@ wait $apid
 check "stale list lock, two waiters: B stopped before the takeover" [ -e "$C/b.reached" ]
 check "stale list lock, two waiters: no change lost" list_is "com.example.a
 com.example.b"
-check "stale list lock, two waiters: no lock left" sh -c '[ ! -e "$1" ] && [ ! -e "$1.takeover" ]' sh "$L"
+check "stale list lock, two waiters: no lock left" [ -z "$(ls -a "$PD_DATA_DIR" | grep '^list\.lock')" ]
 
 # A command killed while taking a stale lock over leaves its takeover
 # behind. Two waiters then: B stops right before it would remove that old
