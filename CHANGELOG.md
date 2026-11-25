@@ -7,6 +7,14 @@
 - In Chinese the WebUI uses the phone's own font, so Latin and Chinese letters match
 - The links on the help page (GitHub) open in your browser instead of inside the WebUI, where a website could reach the root manager
 
+### Fork fixes
+
+- The list of detached apps, the auto-skip list and the list of apps the scan remembers are kept when a step of a change fails (for example a full storage), and the command reports the error instead of success
+- Backups in internal storage follow no link: they are written in a private folder first and then moved in place. A Play-Detach folder that is a link is not used; backups go to Download instead
+- A backup path given as /sdcard/... (also a relative path, or Termux's ~/storage/shared) is written in the real internal storage folder, so it is not refused
+- The scan does nothing when the package manager fails, so apps it did not list are not taken for new ones
+- A command ended early (Ctrl-C, a signal) removes its temporary files and locks and reports a failure
+
 ## v1.4.1
 
 - Status and settings now recognises the built-in Zygisk of SukiSU-Ultra instead of saying that no Zygisk was found. Detaching itself already worked with it
