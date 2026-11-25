@@ -340,6 +340,46 @@ elif [ "$(PATH="$STUBS:$PATH" command -v setpriv)" = "$STUBS/setpriv" ]; then
     build_case outlink 'printf x >"$V/module.zip"; mv "$OUT" "$OUT.old"; ln -s "$V" "$OUT"'
     check "build, output folder replaced by a link: refused" [ "$RC" != 0 ]
     check "build, output folder replaced by a link: nothing written behind it" [ ! -e "$D/v/desc" ]
+
+    # This repo's own build() (module-ci.conf) runs tests/run.sh before it
+    # builds: a failing test fails the build. The upstream merge is turned off
+    # (no network here) and build.sh is a stub that leaves a zip; tests/run.sh
+    # is a stub (exit $2) that saves its environment, or the real suite ("real").
+    conf_case() {
+        local d="$W/c-$1"
+        rm -rf "$d"
+        mkdir -p "$d/work/.forgejo" "$d/work/tests"
+        if [ "$2" = real ]; then
+            cp -R "$ROOT/." "$d/work/"
+            rm -rf "$d/work/.git"
+        else
+            printf '#!/bin/sh\nenv >"$OUT/tests.env"\nexit %s\n' "$2" >"$d/work/tests/run.sh"
+        fi
+        cp "$ROOT/.forgejo/module-ci.sh" "$d/work/.forgejo/module-ci.sh"
+        { cat "$ROOT/.forgejo/module-ci.conf"; echo 'UPSTREAM_URL=""'; } >"$d/work/.forgejo/module-ci.conf"
+        printf '#!/bin/sh\nmkdir -p "$OUT_DIR" && printf x >"$OUT_DIR/play-detach-test.zip"\n' >"$d/work/build.sh"
+        git -C "$d/work" init -q -b main
+        git -C "$d/work" add -A
+        git -C "$d/work" commit -qm seed
+        : >"$d/setpriv.log"
+        (
+            cd "$d" &&
+                PATH="$STUBS:$PATH" SETPRIV_LOG="$d/setpriv.log" SERVER_URL=https://forge.example.invalid REPOSITORY=$REPOSITORY \
+                    BASE_SHA="$(git -C "$d/work" rev-parse HEAD)" RELEASE_TOKEN=not-for-the-build \
+                    timeout 900 bash "$d/work/.forgejo/module-ci.sh" build "$d/work"
+        ) >"$d/log" 2>&1
+        RC=$?
+        D=$d
+    }
+    conf_case tfail 1
+    check "build, a test fails: the build fails" sh -c '[ "$1" != 0 ] && grep -q "build failed" "$2" && [ ! -e "$3" ]' sh "$RC" "$D/log" "$D/work/.ci-out/module.zip"
+    conf_case tpass 0
+    check "build, tests pass: the build passes" sh -c '[ "$1" = 0 ] && [ -f "$2" ]' sh "$RC" "$D/work/.ci-out/module.zip"
+    check "build, tests ran with scratch in the build area, under bash, without the token" \
+        sh -c 'grep -qx "TMPDIR=$2/.ci-home/tmp" "$1" && grep -qx "SH=bash" "$1" && ! grep -q "^RELEASE_TOKEN=" "$1"' sh "$D/work/.ci-out/tests.env" "$D/work"
+    conf_case treal real
+    check "build, the real tests/run.sh passes in the build step" [ "$RC" = 0 ]
+    [ "$RC" = 0 ] || grep -E '^FAIL|^passed' "$D/log" | sed 's/^/    /'
 else
     no "build: setpriv stub not first on PATH"
 fi
