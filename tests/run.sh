@@ -378,9 +378,9 @@ check "killed takeover, two waiters: no change lost" list_is "com.example.a
 com.example.b"
 check "killed takeover, two waiters: no lock left" [ -z "$(ls -a "$PD_DATA_DIR" | grep '^list\.lock')" ]
 
-# A command ended by a signal exits non-zero and leaves no lock (here: TERM
-# to scan while the sort that feeds seen.list is stopped; the shell runs
-# the trap when that pipe ends)
+# A command ended by a signal exits non-zero and leaves no lock and no
+# temporary file (here: TERM to scan while the sort that feeds seen.list
+# is stopped; the shell runs the trap when that pipe has written it)
 fresh
 printf 'package:com.example.o1  installer=com.example.inst\n' >"$PD_TEST_PM"
 : >"$C/t.wait"
@@ -393,6 +393,7 @@ kill -TERM "$tpid" 2>/dev/null
 wait "$tpid"
 check "scan ended by a signal: exit not 0" [ $? != 0 ]
 check "scan ended by a signal: no lock left" [ -z "$(ls -a "$PD_DATA_DIR" | grep 'lock')" ]
+check "scan ended by a signal: no temporary file left" [ -z "$(ls -a "$PD_DATA_DIR" | grep '\.tmp\.')" ]
 
 # A failed sort must keep the list and seen.list (its status was lost
 # behind the cat that checks the write)

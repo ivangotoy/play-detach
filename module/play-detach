@@ -161,6 +161,10 @@ read_list() {
 LOCKS=
 STAGE=
 cleanup() {
+    # A command ended by a signal or an error ($1, else the exit status)
+    # can leave a temporary file between its write and its rename
+    [ "${1:-$?}" = 0 ] || rm -f "$LIST.tmp.$$" "$SEEN.tmp.$$" "$AUTO_LOG.tmp.$$" "$SKIP_FILE.tmp.$$" \
+        "$HISTORY.tmp.$$" "$STORE_FILE.tmp.$$" "$HOOK_FILE.tmp.$$"
     # <lock>.takeover: the takeover folder of older versions, used by nobody
     # now; removed only by the holder of that lock
     for l in $LOCKS; do rm -rf "$l" "$l.takeover"; done
@@ -168,7 +172,7 @@ cleanup() {
 }
 trap cleanup EXIT
 # The EXIT trap is run here: mksh would end with status 0 after it
-trap 'trap - EXIT; cleanup; exit 1' INT TERM HUP
+trap 'trap - EXIT; cleanup 1; exit 1' INT TERM HUP
 
 # take_lock <dir> <tries, 0.1 s apart> <stale after seconds>
 take_lock() {
