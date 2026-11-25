@@ -310,14 +310,10 @@ save_backup() {
     # link or a relative path) is taken to the real folder /data/media/<n>
     # when that exists: FUSE shows the media provider as the owner of what
     # root makes there, so the checks below would fail. Messages keep the
-    # path the user gave. (PD_FS_ROOT: a test folder standing for /)
+    # path the user gave. The real path decides the user (<n>); the typed
+    # /sdcard and /storage/self/primary (user 0) only when it does not.
+    # (PD_FS_ROOT: a test folder standing for /)
     r=${PD_FS_ROOT:-}
-    m=
-    case "$dir/" in
-        "$r/sdcard/"*) m="$r/data/media/0${dir#"$r/sdcard"}" ;;
-        "$r/storage/self/primary/"*) m="$r/data/media/0${dir#"$r/storage/self/primary"}" ;;
-    esac
-    [ -n "$m" ] && [ -d "$m" ] && dir=$m
     adir=$(cd -P "$dir" && pwd -P) || {
         echo "Error: cannot write $bfile" >&2
         return 1
@@ -332,7 +328,15 @@ save_backup() {
             case "${m%%/*}" in *[!0-9]*) m= ;; *) m="$rr/data/media/$m" ;; esac
             ;;
     esac
-    [ -n "$m" ] && [ -d "$m" ] && adir=$m
+    if [ -n "$m" ]; then
+        [ ! -d "$m" ] || adir=$m
+    else
+        case "$dir/" in
+            "$r/sdcard/"*) m="$r/data/media/0${dir#"$r/sdcard"}" ;;
+            "$r/storage/self/primary/"*) m="$r/data/media/0${dir#"$r/storage/self/primary"}" ;;
+        esac
+        [ -n "$m" ] && [ -d "$m" ] && adir=$(cd -P "$m" && pwd -P)
+    fi
     mkdir "$adir/.play-detach-backup.$$" 2>/dev/null || {
         echo "Error: cannot write $bfile" >&2
         return 1

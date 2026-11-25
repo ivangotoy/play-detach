@@ -733,6 +733,14 @@ for p in sdcardX/Download storage/emulated/obb/Download storage/emulated/0x/Down
     check "backup to /$p: written as given" sh -c 'grep -qx com.example.a "$1" && [ -z "$(ls -A "$2")" ] && [ -z "$(ls -A "$3")" ]' \
         sh "$FL/$p/n.txt" "$FL/data/media/0x/Download" "$FL/data/media/obb/Download"
 done
+# A secondary user's /sdcard (a link into /storage/emulated/10): the backup
+# goes to that user's /data/media/10, never to user 0's folder
+FU=$C/rootu
+mkdir -p "$FU/data/media/0/Download" "$FU/data/media/10/Download" "$FU/storage/emulated/10/Download"
+ln -s "$FU/storage/emulated/10" "$FU/sdcard"
+PD_FS_ROOT=$FU pd backup "$FU/sdcard/Download/u.txt"
+check "backup to /sdcard of user 10: written in /data/media/10" \
+    sh -c 'grep -qx com.example.a "$1" && [ ! -e "$2" ] && [ ! -e "$3" ]' sh "$FU/data/media/10/Download/u.txt" "$FU/data/media/0/Download/u.txt" "$FU/storage/emulated/10/Download/u.txt"
 if [ "$(id -u)" != 0 ]; then
     mkdir -p "$FL/data/media/0/RO" "$FL/storage/emulated/0/RO"
     "$REAL_CHMOD" 555 "$FL/data/media/0/RO"
