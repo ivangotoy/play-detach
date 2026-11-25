@@ -100,8 +100,10 @@ echo "    versionCode=84021 minSdk=29 targetSdk=35"
 echo "    versionName=44.1.20-31"
 EOF
 # pm list packages -3 -i prints the lines of $PD_TEST_PM
+# (PD_TEST_PM_FAIL: then it exits 1, as a pm cut off after part of its list)
 stub pm <<'EOF'
 [ -f "$PD_TEST_PM" ] && cat "$PD_TEST_PM"
+[ -z "$PD_TEST_PM_FAIL" ] || exit 1
 exit 0
 EOF
 # busybox --list / busybox inotifyd for service.sh: one /data/app event, then
@@ -489,6 +491,19 @@ printf 'package:com.example.o1  installer=com.android.vending\npackage:com.examp
 PATH="$STUBS/fail-skiptr:$PATH" pd scan
 check "scan, auto-skip list unreadable: app of a skipped installer not detached" list_is ""
 check "scan, auto-skip list unreadable: seen.list kept" [ "$(cat "$PD_DATA_DIR/seen.list")" = com.example.o1 ]
+# pm that fails after part of its list (worker decision: a failed pm is not
+# trusted): seen.list keeps the apps it did not print, and the next scan
+# detaches none of them
+fresh
+printf 'package:com.example.o1  installer=com.example.inst\npackage:com.example.o2  installer=com.example.inst\n' >"$PD_TEST_PM"
+pd autodetach on
+printf 'package:com.example.o1  installer=com.example.inst\n' >"$PD_TEST_PM"
+PD_TEST_PM_FAIL=1 pd scan
+check "scan, pm failed after part of its list: seen.list kept" [ "$(cat "$PD_DATA_DIR/seen.list")" = "com.example.o1
+com.example.o2" ]
+printf 'package:com.example.o1  installer=com.example.inst\npackage:com.example.o2  installer=com.example.inst\n' >"$PD_TEST_PM"
+pd scan
+check "scan after a failed pm: old apps not detached" list_is ""
 # Pruning auto.log of removed apps: whole names only (a name that is part
 # of an installed one is removed), skip lines stay
 fresh

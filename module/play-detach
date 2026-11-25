@@ -467,17 +467,19 @@ scan_store() {
         mv -f "$STORE_FILE.tmp.$$" "$STORE_FILE" || rm -f "$STORE_FILE.tmp.$$"
 }
 
-# Prints "package installer" for every user app.
+# Prints "package installer" for every user app. Returns 1 when pm or sed
+# fail: a cut listing would make the missing apps look new at the next scan.
 user_apps() {
-    pm list packages -3 -i 2>/dev/null |
-        sed -n 's/^package:\([^[:space:]]*\)[[:space:]]*installer=\([^[:space:]]*\).*/\1 \2/p'
+    { ua=$({ { pm list packages -3 -i 2>/dev/null || echo pm >&3; } |
+        { sed -n 's/^package:\([^[:space:]]*\)[[:space:]]*installer=\([^[:space:]]*\).*/\1 \2/p' || echo sed >&3; } >&4; } 3>&1); } 4>&1
+    [ -z "$ua" ]
 }
 
 # Finds user apps that were not there at the last scan. With auto-detach on,
 # new sideloaded apps are detached. "scan_apps snapshot" only remembers the
 # current apps (used when auto-detach is turned on, so nothing old is touched).
 scan_apps() {
-    cur=$(user_apps)
+    cur=$(user_apps) || return 0 # pm failed, try next time
     [ -n "$cur" ] || return 0 # package manager not ready, try next time
     # mksh keeps a here-document (lines_of) in a temporary file: when that
     # cannot be written (full /data) it prints nothing, so every app would
