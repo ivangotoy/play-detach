@@ -181,7 +181,7 @@
       <ul>
         <li><strong>Zygisk library</strong> - C++20, built with Android NDK r29 for arm64-v8a. Uses Zygisk API v4, so it runs on ReZygisk, Zygisk Next, NeoZygisk and Magisk. No third-party libraries. Every read from Play Store binder data is bounds-checked, and on anything unexpected the call is passed through untouched.</li>
         <li><strong>Command line tool</strong> - a plain shell script. The list is written to a temporary file and then swapped in, so the Play Store never reads a half-written list.</li>
-        <li><strong>Background check</strong> - a small shell script started at boot (<code>service.sh</code>) that sleeps on Linux inotify events (busybox or toybox <code>inotifyd</code>) and notices new apps, Play Store updates and failed self-checks. Without inotifyd it falls back to a check every 3 seconds.</li>
+        <li><strong>Background check</strong> - a small shell script started at boot (<code>service.sh</code>) that sleeps on Linux inotify events (busybox or toybox <code>inotifyd</code>) and notices new apps, Play Store updates and failed self-checks. Without inotifyd, or when it keeps ending at once, it falls back to a check every 3 seconds.</li>
         <li><strong>WebUI</strong> - plain HTML, CSS and JavaScript with no frameworks and no build step. App names and icons come from the root manager's WebUI API. Fonts are bundled, so it works offline.</li>
         <li><strong>Build</strong> - one <code>build.sh</code> script builds the whole module from source.</li>
       </ul>
@@ -339,7 +339,7 @@
       <ul>
         <li><strong>Библиотека Zygisk</strong> - C++20, собрана с Android NDK r29 для arm64-v8a. Использует Zygisk API v4, поэтому работает на ReZygisk, Zygisk Next, NeoZygisk и Magisk. Без сторонних библиотек. Каждое чтение данных binder Play Маркета проверяется на выход за границы, а при любых неожиданных данных вызов пропускается без изменений.</li>
         <li><strong>Инструмент командной строки</strong> - обычный shell-скрипт. Список записывается во временный файл и затем подменяется, поэтому Play Маркет никогда не прочитает наполовину записанный список.</li>
-        <li><strong>Фоновая проверка</strong> - небольшой shell-скрипт, запускаемый при загрузке (<code>service.sh</code>), который спит до событий Linux inotify (<code>inotifyd</code> из busybox или toybox) и замечает новые приложения, обновления Play Маркета и непройденные самопроверки. Без inotifyd он проверяет каждые 3 секунды.</li>
+        <li><strong>Фоновая проверка</strong> - небольшой shell-скрипт, запускаемый при загрузке (<code>service.sh</code>), который спит до событий Linux inotify (<code>inotifyd</code> из busybox или toybox) и замечает новые приложения, обновления Play Маркета и непройденные самопроверки. Без inotifyd, или если он раз за разом сразу завершается, он проверяет каждые 3 секунды.</li>
         <li><strong>WebUI</strong> - чистые HTML, CSS и JavaScript без фреймворков и сборки. Названия и иконки приложений берутся из WebUI API root-менеджера. Шрифты встроены, поэтому всё работает без интернета.</li>
         <li><strong>Сборка</strong> - один скрипт <code>build.sh</code> собирает весь модуль из исходников.</li>
       </ul>
@@ -497,7 +497,7 @@
       <ul>
         <li><strong>Zygisk 库</strong> - C++20，使用 Android NDK r29 为 arm64-v8a 构建。使用 Zygisk API v4，因此可在 ReZygisk、Zygisk Next、NeoZygisk 和 Magisk 上运行。不依赖任何第三方库。每次读取 Play 商店的 binder 数据都会做边界检查，一旦遇到异常情况，该调用会被原样放行。</li>
         <li><strong>命令行工具</strong> - 一个纯 shell 脚本。列表先写入临时文件再整体替换，因此 Play 商店绝不会读到写了一半的列表。</li>
-        <li><strong>后台检查</strong> - 一个小型 shell 脚本，开机时启动（<code>service.sh</code>），通过 Linux inotify 事件休眠等待（busybox 或 toybox 的 <code>inotifyd</code>），并及时感知新应用、Play 商店更新和自检失败。如果没有 inotifyd，则退化为每 3 秒检查一次。</li>
+        <li><strong>后台检查</strong> - 一个小型 shell 脚本，开机时启动（<code>service.sh</code>），通过 Linux inotify 事件休眠等待（busybox 或 toybox 的 <code>inotifyd</code>），并及时感知新应用、Play 商店更新和自检失败。如果没有 inotifyd，或它反复启动后立即退出，则退化为每 3 秒检查一次。</li>
         <li><strong>WebUI</strong> - 纯 HTML、CSS 和 JavaScript，没有框架也没有构建步骤。应用名称和图标来自 root 管理器的 WebUI API。字体已内置，因此可以离线使用。</li>
         <li><strong>构建</strong> - 一个 <code>build.sh</code> 脚本即可从源码构建整个模块。</li>
       </ul>

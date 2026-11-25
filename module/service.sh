@@ -133,7 +133,7 @@ watch_events() {
     return 1
 }
 
-# Old way, only when no inotifyd exists
+# Old way: no inotifyd, no event pipe, or an inotifyd that keeps ending
 poll_loop() {
     last_app=
     last_status=
