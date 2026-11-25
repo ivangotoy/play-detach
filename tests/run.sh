@@ -201,6 +201,17 @@ exec $REAL_MV "\$@"
 EOF
 chmod 755 "$STUBS/rm" "$STUBS/rmdir" "$STUBS/sort" "$STUBS/chmod" "$STUBS/mv"
 
+# failing <folder> <command> [first argument]: $STUBS/<folder>/<command> ends
+# at once with status 1 and no output (a killed or broken stage of a pipe),
+# for every call or only for calls with that first argument; other calls run
+# the real command. Put the folder on PATH for one command: PATH="$STUBS/<folder>:$PATH" pd ...
+failing() {
+    mkdir -p "$STUBS/$1"
+    printf '#!/bin/sh\nif [ -z "%s" ] || [ "$1" = "%s" ]; then exit 1; fi\nexec %s "$@"\n' \
+        "$3" "$3" "$(command -v "$2")" >"$STUBS/$1/$2"
+    "$REAL_CHMOD" 755 "$STUBS/$1/$2"
+}
+
 # A fresh fake phone for one test case
 fresh() {
     C=$WORK/case
@@ -371,6 +382,38 @@ printf 'package:com.example.new  installer=com.google.android.packageinstaller\n
 pd scan
 unset PD_TEST_SORT_FAIL
 check "scan, failed sort: seen.list kept" [ "$(cat "$PD_DATA_DIR/seen.list")" = com.example.old ]
+# A list or backup file that cannot be read (tr or sed fails) is never taken
+# as an empty one: nothing is changed and the command fails
+failing fail-tr tr
+failing fail-readsed sed -e
+for f in fail-tr fail-readsed; do
+    fresh
+    pd add com.example.a com.example.b
+    pd backup "$PD_STORAGE/Download/b.txt"
+    printf 'com.example.x\n' >"$C/in.txt"
+    PATH="$STUBS/$f:$PATH" pd add com.example.new
+    check "add, list unreadable ($f): exit 1" [ $? = 1 ]
+    PATH="$STUBS/$f:$PATH" pd remove com.example.a
+    check "remove, list unreadable ($f): exit 1" [ $? = 1 ]
+    PATH="$STUBS/$f:$PATH" pd import "$C/in.txt"
+    check "import, unreadable ($f): exit 1" [ $? = 1 ]
+    PATH="$STUBS/$f:$PATH" pd restore "$C/in.txt"
+    check "restore, unreadable ($f): exit 1" [ $? = 1 ]
+    check "add, remove, import, restore, unreadable ($f): list kept" list_is "com.example.a
+com.example.b"
+    PATH="$STUBS/$f:$PATH" pd backup "$PD_STORAGE/Download/b.txt"
+    check "backup, list unreadable ($f): exit 1" [ $? = 1 ]
+    check "backup, list unreadable ($f): old backup kept" [ "$(grep -vc '^#' "$PD_STORAGE/Download/b.txt")" = 2 ]
+    PATH="$STUBS/$f:$PATH" pd list
+    check "list, unreadable ($f): exit 1" [ $? = 1 ]
+done
+fresh
+printf 'package:com.example.old  installer=com.google.android.packageinstaller\n' >"$PD_TEST_PM"
+pd autodetach on
+pd add com.example.a
+printf 'package:com.example.old  installer=com.google.android.packageinstaller\npackage:com.example.new  installer=com.google.android.packageinstaller\n' >"$PD_TEST_PM"
+PATH="$STUBS/fail-readsed:$PATH" pd scan
+check "scan, list unreadable: list kept" list_is com.example.a
 # A list text longer than one command argument may be (an external printf
 # in mksh) must still reach the size check, never an empty list
 fresh

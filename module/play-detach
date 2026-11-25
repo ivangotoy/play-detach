@@ -122,10 +122,18 @@ check_pkgs() {
     done
 }
 
+# Prints the lines of file $1 without CRs, blanks, comments and spaces at
+# the ends. Returns 1 when tr or sed fail: a lost read is not an empty file.
+clean_lines() {
+    { rd=$({ { tr -d '\r' <"$1" || echo tr >&3; } |
+        { sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' -e '/^#/d' || echo sed >&3; } >&4; } 3>&1); } 4>&1
+    [ -z "$rd" ]
+}
+
 # Prints the package lines of a file (no blanks or comments) after checking
 # each whole line, so "com.a com.b" on one line is rejected.
 read_pkg_file() {
-    out=$(tr -d '\r' <"$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' -e '/^#/d')
+    out=$(clean_lines "$1") || die "cannot read $1"
     old_ifs=$IFS
     IFS='
 '
@@ -142,7 +150,10 @@ read_pkg_file() {
 # Prints the current list, one package per line, without blanks or comments.
 read_list() {
     [ -f "$LIST" ] || return 0
-    tr -d '\r' <"$LIST" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' -e '/^#/d'
+    clean_lines "$LIST" || {
+        echo "Error: cannot read $LIST" >&2
+        return 1
+    }
 }
 
 # Locks are directories (mkdir is atomic). They are removed when the command
@@ -224,8 +235,10 @@ trim_history() {
 
 # Replaces the list with stdin (sorted, unique) using an atomic rename, so the
 # Play Store never reads a half-written file. $1 = who changed it (user, auto,
-# import, restore), kept in the history. Callers hold list_lock and must
-# check the result: in a pipeline die only ends this function's subshell.
+# import, restore), kept in the history. With $2 = merge the current list is
+# added to stdin here, where a failed read stops the write. Callers hold
+# list_lock and must check the result: in a pipeline die only ends this
+# function's subshell.
 write_list() {
     mkdir -p "$DATA_DIR" || die "cannot create $DATA_DIR"
     chmod 700 "$DATA_DIR"
@@ -233,9 +246,11 @@ write_list() {
     # A failed sort and a failed write are both reported on fd 3: cat reports
     # a failed write (busybox sort does not for one line), and the text never
     # becomes a command argument (too long for an external printf).
-    st=$({ { sort -u || echo sort >&3; } | cat >"$tmp" || echo write >&3; } 3>&1)
+    st=$({ { { [ "$2" != merge ] || read_list 2>/dev/null || echo read >&3; cat; } | sort -u || echo sort >&3; } |
+        cat >"$tmp" || echo write >&3; } 3>&1)
     [ -z "$st" ] || {
         rm -f "$tmp"
+        case "$st" in read*) die "cannot read $LIST" ;; esac
         die "cannot write $tmp"
     }
     # shellcheck disable=SC2046 # "lines bytes"
@@ -448,7 +463,7 @@ scan_apps() {
     kept=
     n=0
     if [ "$1" != snapshot ] && [ -f "$SEEN" ] && [ -f "$AUTO_FLAG" ]; then
-        detached=$(read_list)
+        detached=$(read_list) || return 1
         skip=" $RESTORERS $(tr '\n' ' ' 2>/dev/null <"$SKIP_FILE") "
         old_ifs=$IFS
         IFS='
@@ -516,7 +531,7 @@ scan_apps() {
         if [ -n "$found" ]; then
             list_lock
             # shellcheck disable=SC2086 # $found is a list of checked package names
-            { read_list; printf '%s\n' $found; } | write_list auto || return 1
+            printf '%s\n' $found | write_list auto merge || return 1
             auto_backup
             restart_store
         fi
@@ -646,7 +661,7 @@ case "$cmd" in
         [ $# -gt 0 ] || die "no package given"
         check_pkgs "$@"
         list_lock
-        { read_list; printf '%s\n' "$@"; } | write_list user || exit 1
+        printf '%s\n' "$@" | write_list user merge || exit 1
         auto_backup
         restart_store
         for p in "$@"; do echo "Detached: $p"; done
@@ -655,7 +670,7 @@ case "$cmd" in
         [ $# -gt 0 ] || die "no package given"
         check_pkgs "$@"
         list_lock
-        current=$(read_list)
+        current=$(read_list) || exit 1
         for p in "$@"; do
             current=$(printf '%s\n' "$current" | grep -vxF "$p")
         done
@@ -683,7 +698,7 @@ case "$cmd" in
         pkgs=$(read_pkg_file "$1") || exit 1
         [ -n "$pkgs" ] || die "no packages in $1"
         list_lock
-        { read_list; printf '%s\n' "$pkgs"; } | write_list import || exit 1
+        printf '%s\n' "$pkgs" | write_list import merge || exit 1
         auto_backup
         restart_store
         echo "Imported $(printf '%s\n' "$pkgs" | wc -l) package(s)"
