@@ -634,6 +634,14 @@ check "backup over a link: backup is a file" sh -c '[ -f "$1" ] && [ ! -L "$1" ]
 )
 check "backup swapped for a link before chmod: file behind it keeps its mode" [ "$(stat -c %a "$C/victim")" = 600 ]
 check "backup: no staging folder left" [ -z "$(ls -A "$PD_STORAGE/Download" | grep '^\.play-detach')" ]
+# The staging folder's name is known too: a link planted there is refused,
+# left alone and not followed
+mkdir "$C/victimdir"
+PATH="$STUBS:$PATH" PD_BB=1 "$SH" -c 'ln -s "$1" "${2%/*}/.play-detach-backup.$$" && exec "$3" "$4" backup "$2"' \
+    sh "$C/victimdir" "$B" "$SH" "$ROOT/module/play-detach" >"$C/out" 2>&1
+check "backup, link at the staging folder name: refused" [ $? = 1 ]
+check "backup, link at the staging folder name: nothing written behind it" [ -z "$(ls -A "$C/victimdir")" ]
+check "backup, link at the staging folder name: link left alone" [ -n "$(find "$PD_STORAGE/Download" -name '.play-detach-backup.*' -type l)" ]
 
 # status
 fresh
@@ -977,6 +985,15 @@ mkdir "$C/victimdir"
     install_module
 )
 check "install: backup folder swapped for a link before chmod: folder behind it keeps its mode" [ "$(stat -c %a "$C/victimdir")" = 700 ]
+# A link planted at the installer's staging folder name (install_module
+# runs it in a subshell of this script, so its $$ is ours)
+fresh
+"$REAL_RM" -rf "$PD_STORAGE/Play-Detach"
+mkdir "$C/victimdir"
+ln -s "$C/victimdir" "$PD_STORAGE/.play-detach-folder.$$"
+install_module
+check "install: link at the staging folder name: nothing made behind it" [ -z "$(ls -A "$C/victimdir")" ]
+check "install: link at the staging folder name: link left alone" [ -L "$PD_STORAGE/.play-detach-folder.$$" ]
 fresh
 install_module x86_64
 check "install: abort on non-arm64" grep -q '^ABORT: ! Only arm64' "$C/install.log"
