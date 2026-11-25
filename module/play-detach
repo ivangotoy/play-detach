@@ -161,7 +161,9 @@ read_list() {
 LOCKS=
 STAGE=
 cleanup() {
-    for l in $LOCKS; do rm -rf "$l"; done
+    # <lock>.takeover: the takeover folder of older versions, used by nobody
+    # now; removed only by the holder of that lock
+    for l in $LOCKS; do rm -rf "$l" "$l.takeover"; done
     [ -z "$STAGE" ] || rm -rf "$STAGE"
 }
 trap cleanup EXIT

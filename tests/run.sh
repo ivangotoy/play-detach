@@ -323,6 +323,14 @@ check "stale list lock, two waiters: no change lost" list_is "com.example.a
 com.example.b"
 check "stale list lock, two waiters: no lock left" [ -z "$(ls -a "$PD_DATA_DIR" | grep '^list\.lock')" ]
 
+# The takeover folder name of older versions (<lock>.takeover) is used by
+# nobody now: the next holder of that lock removes a leftover one
+fresh
+mkdir "$PD_DATA_DIR/list.lock.takeover"
+pd add com.example.a
+check "old-version takeover folder left: add works" list_is com.example.a
+check "old-version takeover folder left: removed by the lock holder" [ ! -e "$PD_DATA_DIR/list.lock.takeover" ]
+
 # A command killed while taking a stale lock over leaves its takeover
 # behind. Two waiters then: B stops right before it would remove that old
 # takeover; A takes the lock over and stops right before removing the stale
