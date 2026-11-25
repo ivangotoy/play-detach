@@ -288,6 +288,22 @@ backup_dir() {
 # Uses its own name for the file ($bfile): callers keep their $file.
 save_backup() {
     bfile=$1
+    # A path through the FUSE view of internal storage (/sdcard,
+    # /storage/self/primary, /storage/emulated/<n>) is taken to the real
+    # folder /data/media/<n> when that exists: FUSE shows the media provider
+    # as the owner of what root makes there, so the checks below would fail.
+    # (PD_FS_ROOT: a test folder standing for /)
+    r=${PD_FS_ROOT:-}
+    m=
+    case "$bfile" in
+        "$r/sdcard/"*) m="$r/data/media/0/${bfile#"$r/sdcard/"}" ;;
+        "$r/storage/self/primary/"*) m="$r/data/media/0/${bfile#"$r/storage/self/primary/"}" ;;
+        "$r/storage/emulated/"*/*)
+            m=${bfile#"$r/storage/emulated/"}
+            case "${m%%/*}" in '' | *[!0-9]*) m= ;; *) m="$r/data/media/$m" ;; esac
+            ;;
+    esac
+    [ -n "$m" ] && [ -d "${m%/*}" ] && bfile=$m
     dir=$(dirname "$bfile")
     [ -d "$dir" ] || {
         echo "Error: folder not found: $dir" >&2

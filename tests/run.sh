@@ -697,6 +697,20 @@ check "backup, staging folder swapped for a link: nothing made through it" sh -c
 # A relative backup path (the folder is resolved before the staging folder is used)
 (cd "$PD_STORAGE/Download" && pd backup rel.txt)
 check "backup to a relative path: written there" grep -qx com.example.a "$PD_STORAGE/Download/rel.txt"
+# A backup path through the FUSE view of internal storage is written in the
+# real folder (/data/media/<n>), where root owns what it makes; a path
+# whose real folder does not exist is used as given (PD_FS_ROOT stands for /)
+FR=$C/root
+mkdir -p "$FR/data/media/0/Download" "$FR/data/media/10/Download" "$FR/sdcard/Download" "$FR/sdcard/Other" \
+    "$FR/storage/self/primary/Download" "$FR/storage/emulated/10/Download"
+for p in sdcard/Download/a.txt storage/self/primary/Download/b.txt; do
+    PD_FS_ROOT=$FR pd backup "$FR/$p"
+    check "backup to /$p: written in /data/media/0" sh -c 'grep -qx com.example.a "$1" && [ ! -e "$2" ]' sh "$FR/data/media/0/Download/${p##*/}" "$FR/$p"
+done
+PD_FS_ROOT=$FR pd backup "$FR/storage/emulated/10/Download/c.txt"
+check "backup to /storage/emulated/10/...: written in /data/media/10" sh -c 'grep -qx com.example.a "$1" && [ ! -e "$2" ]' sh "$FR/data/media/10/Download/c.txt" "$FR/storage/emulated/10/Download/c.txt"
+PD_FS_ROOT=$FR pd backup "$FR/sdcard/Other/d.txt"
+check "backup to /sdcard/... without a real folder: written as given" grep -qx com.example.a "$FR/sdcard/Other/d.txt"
 # The staging folder's name is known too: a link planted there is refused,
 # left alone and not followed
 mkdir "$C/victimdir"
