@@ -1,6 +1,6 @@
 {
-  "version": "v1.4.1-ci7",
-  "versionCode": 16,
-  "zipUrl": "https://git.digtvbg.com/ivangotoy/play-detach/releases/download/v1.4.1-ci7/play-detach-v1.4.1-ci7.zip",
-  "changelog": "https://git.digtvbg.com/ivangotoy/play-detach/raw/commit/bf2edee95b819c2e8466f1e42c2ef8d0961d64bc/CHANGELOG.md"
+  "version": "v1.5.0-ci8",
+  "versionCode": 17,
+  "zipUrl": "https://git.digtvbg.com/ivangotoy/play-detach/releases/download/v1.5.0-ci8/play-detach-v1.5.0-ci8.zip",
+  "changelog": "https://git.digtvbg.com/ivangotoy/play-detach/raw/commit/e16062dd5420660bb43474e47750ddf6dfa946f6/CHANGELOG.md"
 }
