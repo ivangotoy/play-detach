@@ -167,7 +167,8 @@ cleanup() {
     [ -z "$STAGE" ] || rm -rf "$STAGE"
 }
 trap cleanup EXIT
-trap 'exit 1' INT TERM HUP
+# The EXIT trap is run here: mksh would end with status 0 after it
+trap 'trap - EXIT; cleanup; exit 1' INT TERM HUP
 
 # take_lock <dir> <tries, 0.1 s apart> <stale after seconds>
 take_lock() {

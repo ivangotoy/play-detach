@@ -378,6 +378,22 @@ check "killed takeover, two waiters: no change lost" list_is "com.example.a
 com.example.b"
 check "killed takeover, two waiters: no lock left" [ -z "$(ls -a "$PD_DATA_DIR" | grep '^list\.lock')" ]
 
+# A command ended by a signal exits non-zero and leaves no lock (here: TERM
+# to scan while the sort that feeds seen.list is stopped; the shell runs
+# the trap when that pipe ends)
+fresh
+printf 'package:com.example.o1  installer=com.example.inst\n' >"$PD_TEST_PM"
+: >"$C/t.wait"
+PATH="$STUBS:$PATH" PD_BB=1 PD_TEST_SORT_FLAG=$C/t "$SH" "$ROOT/module/play-detach" scan >"$C/t.out" 2>&1 &
+tpid=$!
+i=0
+while [ ! -e "$C/t.reached" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+kill -TERM "$tpid" 2>/dev/null
+"$REAL_RM" -f "$C/t.wait"
+wait "$tpid"
+check "scan ended by a signal: exit not 0" [ $? != 0 ]
+check "scan ended by a signal: no lock left" [ -z "$(ls -a "$PD_DATA_DIR" | grep 'lock')" ]
+
 # A failed sort must keep the list and seen.list (its status was lost
 # behind the cat that checks the write)
 fresh
