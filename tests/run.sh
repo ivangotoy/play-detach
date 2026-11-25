@@ -711,6 +711,38 @@ PD_FS_ROOT=$FR pd backup "$FR/storage/emulated/10/Download/c.txt"
 check "backup to /storage/emulated/10/...: written in /data/media/10" sh -c 'grep -qx com.example.a "$1" && [ ! -e "$2" ]' sh "$FR/data/media/10/Download/c.txt" "$FR/storage/emulated/10/Download/c.txt"
 PD_FS_ROOT=$FR pd backup "$FR/sdcard/Other/d.txt"
 check "backup to /sdcard/... without a real folder: written as given" grep -qx com.example.a "$FR/sdcard/Other/d.txt"
+# Mapped by the real folder too, as on a phone where /sdcard and Termux's
+# ~/storage/shared are links into /storage/emulated/0: a relative path from
+# there, //sdcard, the Termux link. Look-alike names stay as given, and a
+# refused backup names the path the user gave.
+FL=$C/rootl
+mkdir -p "$FL/data/media/0/Download" "$FL/storage/emulated/0/Download" "$FL/home/storage" \
+    "$FL/sdcardX/Download" "$FL/storage/emulated/obb/Download" "$FL/storage/emulated/0x/Download" \
+    "$FL/data/media/0x/Download" "$FL/data/media/obb/Download"
+ln -s "$FL/storage/emulated/0" "$FL/sdcard"
+ln -s "$FL/storage/emulated/0" "$FL/home/storage/shared"
+(cd "$FL/sdcard/Download" && PD_FS_ROOT=$FL pd backup rel.txt)
+PD_FS_ROOT=$FL pd backup "$FL//sdcard/Download/dbl.txt"
+PD_FS_ROOT=$FL pd backup "$FL/home/storage/shared/Download/termux.txt"
+for n in rel dbl termux; do
+    check "backup through the FUSE view ($n): written in /data/media/0" \
+        sh -c 'grep -qx com.example.a "$1" && [ ! -e "$2" ]' sh "$FL/data/media/0/Download/$n.txt" "$FL/storage/emulated/0/Download/$n.txt"
+done
+for p in sdcardX/Download storage/emulated/obb/Download storage/emulated/0x/Download; do
+    PD_FS_ROOT=$FL pd backup "$FL/$p/n.txt"
+    check "backup to /$p: written as given" sh -c 'grep -qx com.example.a "$1" && [ -z "$(ls -A "$2")" ] && [ -z "$(ls -A "$3")" ]' \
+        sh "$FL/$p/n.txt" "$FL/data/media/0x/Download" "$FL/data/media/obb/Download"
+done
+if [ "$(id -u)" != 0 ]; then
+    mkdir -p "$FL/data/media/0/RO" "$FL/storage/emulated/0/RO"
+    "$REAL_CHMOD" 555 "$FL/data/media/0/RO"
+    PD_FS_ROOT=$FL pd backup "$FL/sdcard/RO/e.txt"
+    check "backup refused in the real folder: exit 1, message names the given path" \
+        sh -c '[ "$1" = 1 ] && grep -qF "cannot write $2" "$3" && ! grep -q "/data/media/" "$3"' sh $? "$FL/sdcard/RO/e.txt" "$C/err"
+    "$REAL_CHMOD" 755 "$FL/data/media/0/RO"
+else
+    skipped "backup refused in the real folder (needs a non-root user)"
+fi
 # The staging folder's name is known too: a link planted there is refused,
 # left alone and not followed
 mkdir "$C/victimdir"
