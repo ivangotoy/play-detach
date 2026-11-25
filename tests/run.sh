@@ -167,6 +167,11 @@ if [ -n "\$PD_TEST_MKDIR_TO" ]; then
     for a; do case "\${a##*/}" in .play-detach-install.*)
         $REAL_MKDIR "\$@" && mv "\$a" "\$PD_TEST_MKDIR_TO" && ln -s "\$PD_TEST_MKDIR_TO" "\$a"; exit; esac; done
 fi
+# PD_TEST_STAGE_TO: the same for the shared-storage staging folders
+if [ -n "\$PD_TEST_STAGE_TO" ]; then
+    for a; do case "\${a##*/}" in .play-detach-backup.* | .play-detach-folder.*)
+        $REAL_MKDIR "\$@" && mv "\$a" "\$PD_TEST_STAGE_TO" && ln -s "\$PD_TEST_STAGE_TO" "\$a"; exit; esac; done
+fi
 exec $REAL_MKDIR "\$@"
 EOF
 chmod 755 "$STUBS/mkdir"
@@ -189,7 +194,8 @@ EOF
     echo 'fi'
     echo "exec $REAL_SORT \"\$@\""
 } >"$STUBS/sort"
-# mv that, with PD_TEST_MV_LOG set, logs the full path of its source
+# mv that, with PD_TEST_MV_LOG set, logs the full real path of its source
+# (the folder it is in with links resolved)
 REAL_MV=$(command -v mv)
 cat >"$STUBS/mv" <<EOF
 #!/bin/sh
@@ -197,6 +203,7 @@ if [ -n "\$PD_TEST_MV_LOG" ]; then
     src= prev=
     for a; do src=\$prev; prev=\$a; done
     case "\$src" in /*) ;; *) src="\$(pwd -P)/\$src" ;; esac
+    src="\$(cd -P "\${src%/*}" 2>/dev/null && pwd -P)/\${src##*/}"
     echo "\$src" >>"\$PD_TEST_MV_LOG"
 fi
 exec $REAL_MV "\$@"
@@ -649,6 +656,20 @@ check "backup over a link: backup is a file" sh -c '[ -f "$1" ] && [ ! -L "$1" ]
 )
 check "backup swapped for a link before chmod: file behind it keeps its mode" [ "$(stat -c %a "$C/victim")" = 600 ]
 check "backup: no staging folder left" [ -z "$(ls -A "$PD_STORAGE/Download" | grep '^\.play-detach')" ]
+# The staging folder swapped for a link to another folder right after it is
+# made: refused, nothing is made through it
+mkdir "$C/decoy"
+(
+    PD_TEST_STAGE_TO=$C/decoy/stage PD_TEST_MV_LOG=$C/mv.log
+    export PD_TEST_STAGE_TO PD_TEST_MV_LOG
+    pd backup "$B"
+)
+check "backup, staging folder swapped for a link: refused" [ $? = 1 ]
+check "backup, staging folder swapped for a link: nothing made through it" sh -c '! grep -q "/decoy/" "$1" 2>/dev/null && [ -z "$(ls -A "$2")" ]' sh "$C/mv.log" "$C/decoy/stage"
+"$REAL_RM" -f "$PD_STORAGE/Download"/.play-detach-backup.*
+# A relative backup path (the folder is resolved before the staging folder is used)
+(cd "$PD_STORAGE/Download" && pd backup rel.txt)
+check "backup to a relative path: written there" grep -qx com.example.a "$PD_STORAGE/Download/rel.txt"
 # The staging folder's name is known too: a link planted there is refused,
 # left alone and not followed
 mkdir "$C/victimdir"
@@ -1016,6 +1037,17 @@ check "add: Play-Detach as a link: automatic backup in Download" grep -qx com.ex
 ln -s "$C/victimdir" "$PD_STORAGE/Download"
 pd add com.example.c
 check "add: Download as a link: no automatic backup behind it" [ -z "$(ls -A "$C/victimdir")" ]
+# The installer's staging folder swapped for a link right after it is made:
+# no Play-Detach is made through it
+fresh
+"$REAL_RM" -rf "$PD_STORAGE/Play-Detach"
+mkdir "$C/decoy"
+(
+    PD_TEST_STAGE_TO=$C/decoy/stage PD_TEST_MV_LOG=$C/mv.log
+    export PD_TEST_STAGE_TO PD_TEST_MV_LOG
+    install_module
+)
+check "install: staging folder swapped for a link: nothing made through it" sh -c '! grep -q "/decoy/" "$1" 2>/dev/null && [ -z "$(ls -A "$2")" ]' sh "$C/mv.log" "$C/decoy/stage"
 # A link planted at the installer's staging folder name (install_module
 # runs it in a subshell of this script, so its $$ is ours)
 fresh

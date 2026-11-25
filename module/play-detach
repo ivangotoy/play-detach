@@ -300,20 +300,25 @@ save_backup() {
     # Root follows no link in shared storage: the file is written, owned
     # and moded in a new root-only folder, then renamed in (mv -T replaces
     # a link and never follows it), and not touched by name afterwards.
-    mkdir "$dir/.play-detach-backup.$$" 2>/dev/null || {
+    # The folder is used only from inside, after checking that it is still
+    # the one made here (its real path, root's): swapped for a link or for
+    # another folder, it is refused.
+    adir=$(cd -P "$dir" && pwd -P) && mkdir "$adir/.play-detach-backup.$$" 2>/dev/null || {
         echo "Error: cannot write $bfile" >&2
         return 1
     }
-    STAGE="$dir/.play-detach-backup.$$"
-    tmp="$STAGE/backup"
-    {
-        echo "# Play Detach backup, $(date '+%Y-%m-%d %H:%M'), $count package(s)"
-        read_list
-    } >"$tmp" 2>/dev/null && {
-        # Same owner as the folder, so file managers and apps can read it
-        chown "$(stat -c %u:%g "$dir")" "$tmp" 2>/dev/null
-        chmod 664 "$tmp"
-    } && mv -T -f "$tmp" "$bfile" || {
+    STAGE="$adir/.play-detach-backup.$$"
+    (
+        cd -P "$STAGE" && [ "$(pwd -P)" = "$STAGE" ] && [ -O . ] || exit 1
+        {
+            echo "# Play Detach backup, $(date '+%Y-%m-%d %H:%M'), $count package(s)"
+            read_list
+        } >backup 2>/dev/null && {
+            # Same owner as the folder, so file managers and apps can read it
+            chown "$(stat -c %u:%g "$adir")" backup 2>/dev/null
+            chmod 664 backup
+        } && mv -T -f backup "$adir/${bfile##*/}"
+    ) || {
         rm -rf "$STAGE"
         STAGE=
         echo "Error: cannot write $bfile" >&2

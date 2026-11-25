@@ -140,16 +140,19 @@ STORAGE=${PD_STORAGE:-/data/media/0}
 if [ -d "$STORAGE/Download" ]; then
     BDIR="$STORAGE/Play-Detach"
     # Root follows no link in shared storage: the folder is made, owned,
-    # moded and labelled in a new root-only folder, then renamed in.
+    # moded and labelled in a new root-only folder, used only from inside
+    # after checking it is still the one made here, then renamed in.
     stage="$STORAGE/.play-detach-folder.$$"
     if [ ! -d "$BDIR" ] && mkdir -m 700 "$stage" 2>/dev/null; then
-        if mkdir "$stage/Play-Detach" 2>/dev/null; then
-            chown "$(stat -c %u:%g "$STORAGE/Download")" "$stage/Play-Detach" 2>/dev/null
-            chmod "$(stat -c %a "$STORAGE/Download")" "$stage/Play-Detach" 2>/dev/null
-            ctx=$(stat -c %C "$STORAGE/Download" 2>/dev/null) && [ -n "$ctx" ] && chcon "$ctx" "$stage/Play-Detach" 2>/dev/null
-            mv -T "$stage/Play-Detach" "$BDIR" 2>/dev/null &&
-                ui_print "$(m "- Backup folder created: Play-Detach" "- Создана папка для бэкапов: Play-Detach" "- 已创建备份文件夹：Play-Detach")"
-        fi
+        (
+            cd -P "$stage" && [ "$(pwd -P)" = "$(cd -P "$STORAGE" && pwd -P)/${stage##*/}" ] &&
+                [ -O . ] && [ "$(stat -c %a .)" = 700 ] && mkdir Play-Detach 2>/dev/null || exit 1
+            chown "$(stat -c %u:%g "$STORAGE/Download")" Play-Detach 2>/dev/null
+            chmod "$(stat -c %a "$STORAGE/Download")" Play-Detach 2>/dev/null
+            ctx=$(stat -c %C "$STORAGE/Download" 2>/dev/null) && [ -n "$ctx" ] && chcon "$ctx" Play-Detach 2>/dev/null
+            mv -T Play-Detach "$BDIR" 2>/dev/null
+        ) &&
+            ui_print "$(m "- Backup folder created: Play-Detach" "- Создана папка для бэкапов: Play-Detach" "- 已创建备份文件夹：Play-Detach")"
         rm -rf "$stage"
     fi
     # First automatic backup of an existing list
