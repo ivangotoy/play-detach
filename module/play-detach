@@ -505,8 +505,10 @@ scan_apps() {
     # Written only when an app was installed or removed: the WebUI reads its
     # time to see that the app list changed.
     # A failed write (full /data) must not replace the list: nothing is
-    # done until the current apps can be remembered.
-    st=$({ { lines_of "$cur" | cut -d' ' -f1 | sed '/^$/d' | sort -u || echo sort >&3; } |
+    # done until the current apps can be remembered. Every stage reports a
+    # failure (a later here-document can fail too, after the check above).
+    st=$({ { { lines_of "$cur" || echo lines >&3; } | { cut -d' ' -f1 || echo cut >&3; } |
+        { sed '/^$/d' || echo sed >&3; } | sort -u || echo sort >&3; } |
         cat >"$SEEN.tmp.$$" || echo write >&3; } 3>&1)
     [ -z "$st" ] || {
         rm -f "$SEEN.tmp.$$"

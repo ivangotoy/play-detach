@@ -431,6 +431,40 @@ PATH="$STUBS/fail-blanksed:$PATH" pd restore "$C/in.txt"
 check "restore, failed sed: exit 0, file restored" sh -c '[ "$1" = 0 ] && [ "$(cat "$2")" = com.example.x ]' sh $? "$PD_DATA_DIR/detach.list"
 PATH="$STUBS/fail-grepv:$PATH" pd remove com.example.x
 check "remove, failed grep: list kept" list_is com.example.x
+# A failed stage between the app list and seen.list (cut, sed) must keep
+# seen.list: an emptied one makes every app look new at the next scan
+failing fail-cut cut
+for f in fail-cut fail-blanksed; do
+    fresh
+    printf 'package:com.example.o1  installer=com.example.inst\npackage:com.example.o2  installer=com.example.inst\n' >"$PD_TEST_PM"
+    pd autodetach on
+    printf 'package:com.example.o1  installer=com.example.inst\npackage:com.example.o2  installer=com.example.inst\npackage:com.example.n  installer=com.example.inst\n' >"$PD_TEST_PM"
+    PATH="$STUBS/$f:$PATH" pd scan
+    check "scan, failed stage ($f): seen.list kept" [ "$(cat "$PD_DATA_DIR/seen.list")" = "com.example.o1
+com.example.o2" ]
+done
+# mksh keeps a here-document in a temporary file. When that cannot be made
+# after scan's first check of it (here: its folder goes away when the list
+# is read), every later here-document prints nothing: seen.list must be kept.
+mkdir -p "$STUBS/tmp-gone"
+printf '#!/bin/sh\n[ -d "$PD_TEST_TMP" ] && %s "$PD_TEST_TMP" "$PD_TEST_TMP.gone"\nexec %s "$@"\n' \
+    "$REAL_MV" "$(command -v tr)" >"$STUBS/tmp-gone/tr"
+"$REAL_CHMOD" 755 "$STUBS/tmp-gone/tr"
+if [ -n "$("$SH" -c 'echo "$KSH_VERSION"')" ]; then
+    fresh
+    printf 'package:com.example.o1  installer=com.example.inst\npackage:com.example.o2  installer=com.example.inst\n' >"$PD_TEST_PM"
+    pd autodetach on
+    pd add com.example.a
+    printf 'package:com.example.o1  installer=com.example.inst\npackage:com.example.o2  installer=com.example.inst\npackage:com.example.n  installer=com.example.inst\n' >"$PD_TEST_PM"
+    mkdir "$C/tmp"
+    PATH="$STUBS/tmp-gone:$PATH" TMPDIR=$C/tmp PD_TEST_TMP=$C/tmp pd scan
+    check "scan, here-document fails after the first check: the case ran (mksh)" [ -d "$C/tmp.gone" ]
+    check "scan, here-document fails after the first check: seen.list kept" [ "$(cat "$PD_DATA_DIR/seen.list")" = "com.example.o1
+com.example.o2" ]
+    check "scan, here-document fails after the first check: list kept" list_is com.example.a
+else
+    skipped "scan, here-document fails after the first check (needs mksh)"
+fi
 # A list text longer than one command argument may be (an external printf
 # in mksh) must still reach the size check, never an empty list
 fresh
