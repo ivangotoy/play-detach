@@ -486,13 +486,16 @@ scan_apps() {
         IFS=$old_ifs
     fi
 
-    # Apps that were removed leave the automatic detach log
+    # Apps that were removed leave the automatic detach log. $cur has one
+    # "<package> <installer>" line per app: matched in the shell, so no
+    # failed command can make an installed app look removed.
     if [ -s "$AUTO_LOG" ] && [ -f "$SEEN" ]; then
-        names=$(lines_of "$cur" | cut -d' ' -f1)
         keep=$(while read -r ts what; do
             case "$what" in
                 skip\ *) echo "$ts $what" ;;
-                *) lines_of "$names" | grep -qxF "$what" && echo "$ts $what" ;;
+                *) case "
+$cur" in *"
+$what "*) echo "$ts $what" ;; esac ;;
             esac
         done <"$AUTO_LOG")
         if [ "$keep" != "$(cat "$AUTO_LOG")" ]; then

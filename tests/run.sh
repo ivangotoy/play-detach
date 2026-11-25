@@ -443,6 +443,26 @@ for f in fail-cut fail-blanksed; do
     check "scan, failed stage ($f): seen.list kept" [ "$(cat "$PD_DATA_DIR/seen.list")" = "com.example.o1
 com.example.o2" ]
 done
+# Pruning auto.log of removed apps: whole names only (a name that is part
+# of an installed one is removed), skip lines stay
+fresh
+printf 'package:com.example.o10  installer=com.example.inst\n' >"$PD_TEST_PM"
+pd autodetach on
+printf '1700000000 com.example.o1\n1700000001 example.o10\n1700000002 com.example.o10\n1700000003 skip 7\n' >"$PD_DATA_DIR/auto.log"
+pd scan
+check "scan: auto.log keeps installed apps and skip lines only" [ "$(cat "$PD_DATA_DIR/auto.log")" = "1700000002 com.example.o10
+1700000003 skip 7" ]
+# Pruning auto.log of removed apps: a failed cut or grep must not make an
+# installed app look removed
+failing fail-grepq grep -qxF 2
+for f in fail-cut fail-grepq; do
+    fresh
+    printf 'package:com.example.o1  installer=com.example.inst\n' >"$PD_TEST_PM"
+    pd autodetach on
+    printf '1700000000 com.example.o1\n1700000000 skip 7\n' >"$PD_DATA_DIR/auto.log"
+    PATH="$STUBS/$f:$PATH" pd scan
+    check "scan, failed stage ($f): auto.log entry of an installed app kept" grep -qx '1700000000 com.example.o1' "$PD_DATA_DIR/auto.log"
+done
 # mksh keeps a here-document in a temporary file. When that cannot be made
 # after scan's first check of it (here: its folder goes away when the list
 # is read), every later here-document prints nothing: seen.list must be kept.
@@ -455,6 +475,7 @@ if [ -n "$("$SH" -c 'echo "$KSH_VERSION"')" ]; then
     printf 'package:com.example.o1  installer=com.example.inst\npackage:com.example.o2  installer=com.example.inst\n' >"$PD_TEST_PM"
     pd autodetach on
     pd add com.example.a
+    printf '1700000000 com.example.o1\n' >"$PD_DATA_DIR/auto.log"
     printf 'package:com.example.o1  installer=com.example.inst\npackage:com.example.o2  installer=com.example.inst\npackage:com.example.n  installer=com.example.inst\n' >"$PD_TEST_PM"
     mkdir "$C/tmp"
     PATH="$STUBS/tmp-gone:$PATH" TMPDIR=$C/tmp PD_TEST_TMP=$C/tmp pd scan
@@ -462,6 +483,7 @@ if [ -n "$("$SH" -c 'echo "$KSH_VERSION"')" ]; then
     check "scan, here-document fails after the first check: seen.list kept" [ "$(cat "$PD_DATA_DIR/seen.list")" = "com.example.o1
 com.example.o2" ]
     check "scan, here-document fails after the first check: list kept" list_is com.example.a
+    check "scan, here-document fails after the first check: auto.log kept" [ "$(cat "$PD_DATA_DIR/auto.log")" = "1700000000 com.example.o1" ]
 else
     skipped "scan, here-document fails after the first check (needs mksh)"
 fi
