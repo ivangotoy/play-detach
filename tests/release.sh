@@ -324,6 +324,9 @@ elif [ "$(PATH="$STUBS:$PATH" command -v setpriv)" = "$STUBS/setpriv" ]; then
     check "build with exported keep/drop/v/e: exit 0" [ "$RC" = 0 ]
     check "build with exported keep/drop/v/e: SHELLOPTS not passed" not_in_env "$D" SHELLOPTS=
     check "build with exported keep/drop/v/e: none of them passed" sh -c '! grep -qE "^(keep|drop|v|e)=" "$1"' sh "$D/work/.ci-out/env"
+    # the build step's result variable must not come from the environment
+    build_case rcenv 'printf x >"$OUT/module.zip"' build_rc=1
+    check "build with an exported build_rc: a good build passes" [ "$RC" = 0 ]
     build_case desclink 'printf x >"$OUT/module.zip"; echo planted >"$OUT/upstream-desc"; ln -s "$V/file" "$OUT/desc"'
     check "build, desc planted as a link: file behind it untouched" [ "$(cat "$D/v/file")" = precious ]
     check "build, desc planted as a link: desc written as a file" \
