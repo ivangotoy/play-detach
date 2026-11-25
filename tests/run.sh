@@ -172,6 +172,11 @@ if [ -n "\$PD_TEST_STAGE_TO" ]; then
     for a; do case "\${a##*/}" in .play-detach-backup.* | .play-detach-folder.*)
         $REAL_MKDIR "\$@" && mv "\$a" "\$PD_TEST_STAGE_TO" && ln -s "\$PD_TEST_STAGE_TO" "\$a"; exit; esac; done
 fi
+# PD_TEST_STAGE_UID: the backup staging folder is made owned by that uid
+if [ -n "\$PD_TEST_STAGE_UID" ]; then
+    for a; do case "\${a##*/}" in .play-detach-backup.*)
+        $REAL_MKDIR "\$@" && chown "\$PD_TEST_STAGE_UID" "\$a"; exit; esac; done
+fi
 exec $REAL_MKDIR "\$@"
 EOF
 chmod 755 "$STUBS/mkdir"
@@ -749,6 +754,13 @@ ln -s "$FV/storage/emulated/10" "$FV/sdcard"
 PD_FS_ROOT=$FV pd backup "$FV/sdcard/Download/v.txt"
 check "backup to /sdcard of user 10 without /data/media/10: written as given" \
     sh -c 'grep -qx com.example.a "$1" && [ ! -e "$2" ]' sh "$FV/storage/emulated/10/Download/v.txt" "$FV/data/media/0/Download/v.txt"
+# The staging folder replaced by one of another owner (root only): refused
+if [ "$(id -u)" = 0 ]; then
+    OB=$PD_STORAGE/Download/own.txt
+    (PD_TEST_STAGE_UID=1234; export PD_TEST_STAGE_UID; pd backup "$OB")
+    check "backup, staging folder of another owner: refused" [ $? = 1 ]
+    check "backup, staging folder of another owner: nothing written" [ ! -e "$OB" ]
+fi
 if [ "$(id -u)" != 0 ]; then
     mkdir -p "$FL/data/media/0/RO" "$FL/storage/emulated/0/RO"
     "$REAL_CHMOD" 555 "$FL/data/media/0/RO"
