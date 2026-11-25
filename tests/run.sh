@@ -404,6 +404,33 @@ check "scan ended by a signal: exit not 0" [ $? != 0 ]
 check "scan ended by a signal: no lock left" [ -z "$(ls -a "$PD_DATA_DIR" | grep 'lock')" ]
 check "scan ended by a signal: no temporary file left" [ -z "$(ls -a "$PD_DATA_DIR" | grep '\.tmp\.')" ]
 
+# The same while scan looks for new apps (its loop splits on newlines
+# only): the scan lock is still removed (TERM while grep is stopped)
+mkdir -p "$STUBS/hold-grep"
+{
+    echo '#!/bin/sh'
+    echo 'if [ -n "$PD_TEST_GREP_FLAG" ]; then'
+    hold | sed 's/\$1/$PD_TEST_GREP_FLAG/g'
+    echo 'fi'
+    echo "exec $(command -v grep) \"\$@\""
+} >"$STUBS/hold-grep/grep"
+"$REAL_CHMOD" 755 "$STUBS/hold-grep/grep"
+fresh
+printf 'package:com.example.o1  installer=com.example.inst\n' >"$PD_TEST_PM"
+pd autodetach on
+: >"$C/g.wait"
+PATH="$STUBS/hold-grep:$STUBS:$PATH" PD_BB=1 PD_TEST_GREP_FLAG=$C/g "$SH" "$ROOT/module/play-detach" scan >"$C/g.out" 2>&1 &
+tpid=$!
+i=0
+while [ ! -e "$C/g.reached" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+kill -TERM "$tpid" 2>/dev/null
+"$REAL_RM" -f "$C/g.wait"
+wait "$tpid"
+check "scan ended by a signal in its app loop: stopped there" [ -e "$C/g.reached" ]
+check "scan ended by a signal in its app loop: no scan lock left" [ ! -e "$PD_DATA_DIR/scan.lock" ]
+pd scan
+check "scan ended by a signal in its app loop: next scan runs" [ $? = 0 ]
+
 # A failed sort must keep the list and seen.list (its status was lost
 # behind the cat that checks the write)
 fresh

@@ -167,6 +167,8 @@ cleanup() {
         "$HISTORY.tmp.$$" "$STORE_FILE.tmp.$$" "$HOOK_FILE.tmp.$$"
     # <lock>.takeover: the takeover folder of older versions, used by nobody
     # now; removed only by the holder of that lock
+    # (a signal can come while a loop has IFS set to a newline)
+    IFS=' '
     for l in $LOCKS; do rm -rf "$l" "$l.takeover"; done
     [ -z "$STAGE" ] || rm -rf "$STAGE"
 }
