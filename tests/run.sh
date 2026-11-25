@@ -754,12 +754,17 @@ ln -s "$FV/storage/emulated/10" "$FV/sdcard"
 PD_FS_ROOT=$FV pd backup "$FV/sdcard/Download/v.txt"
 check "backup to /sdcard of user 10 without /data/media/10: written as given" \
     sh -c 'grep -qx com.example.a "$1" && [ ! -e "$2" ]' sh "$FV/storage/emulated/10/Download/v.txt" "$FV/data/media/0/Download/v.txt"
-# The staging folder replaced by one of another owner (root only): refused
-if [ "$(id -u)" = 0 ]; then
+# The staging folder replaced by one of another owner (root only, and only
+# where chown really changes the owner: the CI build cases stub it): refused
+mkdir -p "$C/chown-probe"
+if [ "$(id -u)" = 0 ] && PATH="$STUBS:$PATH" chown 1234 "$C/chown-probe" 2>/dev/null &&
+    [ "$(stat -c %u "$C/chown-probe")" = 1234 ]; then
     OB=$PD_STORAGE/Download/own.txt
     (PD_TEST_STAGE_UID=1234; export PD_TEST_STAGE_UID; pd backup "$OB")
     check "backup, staging folder of another owner: refused" [ $? = 1 ]
     check "backup, staging folder of another owner: nothing written" [ ! -e "$OB" ]
+else
+    skipped "backup, staging folder of another owner (needs root and a working chown)"
 fi
 if [ "$(id -u)" != 0 ]; then
     mkdir -p "$FL/data/media/0/RO" "$FL/storage/emulated/0/RO"
