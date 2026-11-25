@@ -136,14 +136,21 @@ fi
 # Own folder for backups in internal storage (/sdcard/Play-Detach), with the
 # same owner, mode and SELinux label as Download so file managers can open it.
 # If the user deletes it later, backups go to Download instead.
-STORAGE=/data/media/0
+STORAGE=${PD_STORAGE:-/data/media/0}
 if [ -d "$STORAGE/Download" ]; then
     BDIR="$STORAGE/Play-Detach"
-    if [ ! -d "$BDIR" ] && mkdir "$BDIR" 2>/dev/null; then
-        chown "$(stat -c %u:%g "$STORAGE/Download")" "$BDIR" 2>/dev/null
-        chmod "$(stat -c %a "$STORAGE/Download")" "$BDIR" 2>/dev/null
-        ctx=$(stat -c %C "$STORAGE/Download" 2>/dev/null) && [ -n "$ctx" ] && chcon "$ctx" "$BDIR" 2>/dev/null
-        ui_print "$(m "- Backup folder created: Play-Detach" "- Создана папка для бэкапов: Play-Detach" "- 已创建备份文件夹：Play-Detach")"
+    # Root follows no link in shared storage: the folder is made, owned,
+    # moded and labelled in a new root-only folder, then renamed in.
+    stage="$STORAGE/.play-detach-folder.$$"
+    if [ ! -d "$BDIR" ] && mkdir -m 700 "$stage" 2>/dev/null; then
+        if mkdir "$stage/Play-Detach" 2>/dev/null; then
+            chown "$(stat -c %u:%g "$STORAGE/Download")" "$stage/Play-Detach" 2>/dev/null
+            chmod "$(stat -c %a "$STORAGE/Download")" "$stage/Play-Detach" 2>/dev/null
+            ctx=$(stat -c %C "$STORAGE/Download" 2>/dev/null) && [ -n "$ctx" ] && chcon "$ctx" "$stage/Play-Detach" 2>/dev/null
+            mv -T "$stage/Play-Detach" "$BDIR" 2>/dev/null &&
+                ui_print "$(m "- Backup folder created: Play-Detach" "- Создана папка для бэкапов: Play-Detach" "- 已创建备份文件夹：Play-Detach")"
+        fi
+        rm -rf "$stage"
     fi
     # First automatic backup of an existing list
     if [ -d "$BDIR" ] && [ -s "$DATA_DIR/detach.list" ] && [ ! -f "$DATA_DIR/no-auto-backup" ]; then

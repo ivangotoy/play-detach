@@ -174,7 +174,7 @@ REAL_CHMOD=$(command -v chmod)
 cat >"$STUBS/chmod" <<EOF
 #!/bin/sh
 if [ -n "\$PD_TEST_CHMOD_SWAP" ]; then
-    for a; do [ "\$a" = "\$PD_TEST_CHMOD_SWAP" ] && $REAL_RM -f "\$a" && ln -s "\$PD_TEST_CHMOD_TO" "\$a"; done
+    for a; do [ "\$a" = "\$PD_TEST_CHMOD_SWAP" ] && $REAL_RM -rf "\$a" && ln -s "\$PD_TEST_CHMOD_TO" "\$a"; done
 fi
 exec $REAL_CHMOD "\$@"
 EOF
@@ -932,6 +932,26 @@ wait $readpid
 check "install: link to a pipe planted after the remove: nothing written through it" [ ! -s "$C/pipe.got" ]
 check "install: link to a pipe planted after the remove: command is a file" \
     sh -c '[ -f "$1" ] && [ ! -L "$1" ] && grep -q "^exec su -c" "$1"' sh "$C/termux/bin/play-detach"
+# The backup folder in shared storage: made with the owner and mode of
+# Download, and root follows no link swapped in for it while doing that
+fresh
+"$REAL_RM" -rf "$PD_STORAGE/Play-Detach"
+"$REAL_CHMOD" 771 "$PD_STORAGE/Download"
+install_module
+check "install: backup folder made with the mode of Download" \
+    sh -c '[ -d "$1" ] && [ ! -L "$1" ] && [ "$(stat -c %a "$1")" = 771 ]' sh "$PD_STORAGE/Play-Detach"
+check "install: no staging folder left in storage" [ -z "$(ls -A "$PD_STORAGE" | grep '^\.play-detach')" ]
+fresh
+"$REAL_RM" -rf "$PD_STORAGE/Play-Detach"
+"$REAL_CHMOD" 771 "$PD_STORAGE/Download"
+mkdir "$C/victimdir"
+"$REAL_CHMOD" 700 "$C/victimdir"
+(
+    PD_TEST_CHMOD_SWAP=$PD_STORAGE/Play-Detach PD_TEST_CHMOD_TO=$C/victimdir
+    export PD_TEST_CHMOD_SWAP PD_TEST_CHMOD_TO
+    install_module
+)
+check "install: backup folder swapped for a link before chmod: folder behind it keeps its mode" [ "$(stat -c %a "$C/victimdir")" = 700 ]
 fresh
 install_module x86_64
 check "install: abort on non-arm64" grep -q '^ABORT: ! Only arm64' "$C/install.log"
