@@ -159,8 +159,10 @@ read_list() {
 # Locks are directories (mkdir is atomic). They are removed when the command
 # ends, and one older than $3 seconds is left over from a killed command.
 LOCKS=
+STAGE=
 cleanup() {
     for l in $LOCKS; do rm -rf "$l"; done
+    [ -z "$STAGE" ] || rm -rf "$STAGE"
 }
 trap cleanup EXIT
 trap 'exit 1' INT TERM HUP
@@ -287,18 +289,30 @@ save_backup() {
         return 1
     }
     count=$(read_list | wc -l)
-    tmp="$bfile.tmp.$$"
-    {
-        echo "# Play Detach backup, $(date '+%Y-%m-%d %H:%M'), $count package(s)"
-        read_list
-    } >"$tmp" 2>/dev/null && mv -f "$tmp" "$bfile" || {
-        rm -f "$tmp"
+    # Root follows no link in shared storage: the file is written, owned
+    # and moded in a new root-only folder, then renamed in (mv -T replaces
+    # a link and never follows it), and not touched by name afterwards.
+    mkdir "$dir/.play-detach-backup.$$" 2>/dev/null || {
         echo "Error: cannot write $bfile" >&2
         return 1
     }
-    # Same owner as the folder, so file managers and apps can read it
-    chown "$(stat -c %u:%g "$dir")" "$bfile" 2>/dev/null
-    chmod 664 "$bfile"
+    STAGE="$dir/.play-detach-backup.$$"
+    tmp="$STAGE/backup"
+    {
+        echo "# Play Detach backup, $(date '+%Y-%m-%d %H:%M'), $count package(s)"
+        read_list
+    } >"$tmp" 2>/dev/null && {
+        # Same owner as the folder, so file managers and apps can read it
+        chown "$(stat -c %u:%g "$dir")" "$tmp" 2>/dev/null
+        chmod 664 "$tmp"
+    } && mv -T -f "$tmp" "$bfile" || {
+        rm -rf "$STAGE"
+        STAGE=
+        echo "Error: cannot write $bfile" >&2
+        return 1
+    }
+    rmdir "$STAGE"
+    STAGE=
 }
 
 # Keeps a copy of the list after every change. An empty list never replaces

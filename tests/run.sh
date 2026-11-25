@@ -583,6 +583,33 @@ rm -rf "$PD_STORAGE/Play-Detach"
 pd backup
 check "backup: falls back to Download" [ -s "$PD_STORAGE/Download/play-detach-backup.txt" ]
 
+# Shared storage: root must follow no link planted there, at the temporary
+# name ($$ is known when the command is started with exec), at the backup
+# itself, or swapped in for the backup before its mode is set
+fresh
+pd add com.example.a
+echo precious >"$C/victim"
+"$REAL_CHMOD" 600 "$C/victim"
+B=$PD_STORAGE/Download/b.txt
+PATH="$STUBS:$PATH" PD_BB=1 "$SH" -c 'ln -s "$1" "$2.tmp.$$" && exec "$3" "$4" backup "$2"' \
+    sh "$C/victim" "$B" "$SH" "$ROOT/module/play-detach" >"$C/out" 2>&1
+check "backup, link at the temporary name: file behind it untouched" [ "$(cat "$C/victim")" = precious ]
+check "backup, link at the temporary name: backup written" grep -qx com.example.a "$B"
+"$REAL_RM" -f "$B" "$B".tmp.* "$C/victim"
+echo precious >"$C/victim"
+"$REAL_CHMOD" 600 "$C/victim"
+ln -s "$C/victim" "$B"
+pd backup "$B"
+check "backup over a link: file behind it untouched" [ "$(cat "$C/victim")" = precious ]
+check "backup over a link: backup is a file" sh -c '[ -f "$1" ] && [ ! -L "$1" ] && grep -qx com.example.a "$1"' sh "$B"
+(
+    PD_TEST_CHMOD_SWAP=$B PD_TEST_CHMOD_TO=$C/victim
+    export PD_TEST_CHMOD_SWAP PD_TEST_CHMOD_TO
+    pd backup "$B"
+)
+check "backup swapped for a link before chmod: file behind it keeps its mode" [ "$(stat -c %a "$C/victim")" = 600 ]
+check "backup: no staging folder left" [ -z "$(ls -A "$PD_STORAGE/Download" | grep '^\.play-detach')" ]
+
 # status
 fresh
 pd add com.example.app
