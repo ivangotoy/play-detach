@@ -805,11 +805,13 @@ case "$cmd" in
             add | remove)
                 [ -n "$2" ] && valid_pkg "$2" || die "invalid installer name: '$2'"
                 take_lock "$DATA_DIR/skip.lock" 50 30 || die "busy, try again"
-                # a failed sort is reported on fd 3 (grep and cat cannot see it)
+                # a failed stage is reported on fd 3 (the next one cannot see
+                # it); grep's 1 (no line left) is a legal result
                 st=$({ {
-                    cat "$SKIP_FILE" 2>/dev/null
+                    [ ! -f "$SKIP_FILE" ] || cat "$SKIP_FILE" || echo read >&3
                     [ "$1" = add ] && echo "$2"
-                } | sed '/^$/d' | { sort -u || echo sort >&3; } | { if [ "$1" = remove ]; then grep -vxF "$2"; else cat; fi; } |
+                } | { sed '/^$/d' || echo sed >&3; } | { sort -u || echo sort >&3; } |
+                    { if [ "$1" = remove ]; then grep -vxF "$2"; [ $? -lt 2 ] || echo grep >&3; else cat; fi; } |
                     cat >"$SKIP_FILE.tmp.$$" || echo write >&3; } 3>&1)
                 [ -z "$st" ] && mv -f "$SKIP_FILE.tmp.$$" "$SKIP_FILE" || {
                     # cat reports a failed write (busybox grep does not)

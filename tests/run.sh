@@ -450,6 +450,28 @@ PD_TEST_SORT_FAIL=1 pd autoskip remove com.example.inst2
 check "autoskip remove, failed sort: exit 1" [ $? = 1 ]
 check "autoskip, failed sort: list kept" [ "$(cat "$PD_DATA_DIR/auto-skip")" = "com.example.inst
 com.example.inst2" ]
+# The other stages of the auto-skip change (reading the old list, sed, grep).
+# cat is built into mksh: a cat on PATH cannot fail there.
+failing fail-skipcat cat "$PD_DATA_DIR/auto-skip"
+skipcat=fail-skipcat
+case "$("$SH" -c 'command -v cat')" in
+    /*) ;;
+    *)
+        skipcat=
+        skipped "autoskip, failed read of the old list (cat is a shell builtin)"
+        ;;
+esac
+for f in $skipcat fail-blanksed fail-grepv; do
+    printf 'com.example.inst\ncom.example.inst2\n' >"$PD_DATA_DIR/auto-skip"
+    if [ "$f" != fail-grepv ]; then
+        PATH="$STUBS/$f:$PATH" pd autoskip add com.example.more
+        check "autoskip add, failed stage ($f): exit 1" [ $? = 1 ]
+    fi
+    PATH="$STUBS/$f:$PATH" pd autoskip remove com.example.inst2
+    check "autoskip remove, failed stage ($f): exit 1" [ $? = 1 ]
+    check "autoskip, failed stage ($f): list kept" [ "$(cat "$PD_DATA_DIR/auto-skip")" = "com.example.inst
+com.example.inst2" ]
+done
 
 # import / backup / restore
 fresh
