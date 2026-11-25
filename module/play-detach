@@ -464,7 +464,11 @@ scan_apps() {
     n=0
     if [ "$1" != snapshot ] && [ -f "$SEEN" ] && [ -f "$AUTO_FLAG" ]; then
         detached=$(read_list) || return 1
-        skip=" $RESTORERS $(tr '\n' ' ' 2>/dev/null <"$SKIP_FILE") "
+        # an auto-skip list that cannot be read must not let its installers
+        # through: the next scan tries again
+        extra=
+        [ ! -f "$SKIP_FILE" ] || extra=$(tr '\n' ' ' <"$SKIP_FILE") || return 1
+        skip=" $RESTORERS $extra "
         old_ifs=$IFS
         IFS='
 '
@@ -473,6 +477,11 @@ scan_apps() {
             inst=${line#* }
             valid_pkg "$pkg" || continue
             grep -qxF "$pkg" "$SEEN" && continue
+            # 1 = not seen; an error must not make every app look new
+            [ $? = 1 ] || {
+                IFS=$old_ifs
+                return 1
+            }
             case "$skip" in *" $inst "*) continue ;; esac
             n=$((n + 1))
             # Removed and installed again while still on the list: it stays

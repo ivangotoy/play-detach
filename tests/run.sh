@@ -443,6 +443,27 @@ for f in fail-cut fail-blanksed; do
     check "scan, failed stage ($f): seen.list kept" [ "$(cat "$PD_DATA_DIR/seen.list")" = "com.example.o1
 com.example.o2" ]
 done
+# A seen.list or an auto-skip list that cannot be read must not make old
+# apps, or apps of a skipped installer, look new: the scan stops and the
+# next one tries again
+fresh
+printf 'package:com.example.o1  installer=com.example.inst\npackage:com.example.o2  installer=com.example.inst\n' >"$PD_TEST_PM"
+pd autodetach on
+PATH="$STUBS/fail-grepq:$PATH" pd scan
+check "scan, seen.list unreadable: old apps not detached" list_is ""
+check "scan, seen.list unreadable: no scan lock left" [ ! -e "$PD_DATA_DIR/scan.lock" ]
+pd scan
+check "scan, seen.list unreadable: next scan runs" [ $? = 0 ]
+check "scan, seen.list unreadable: next scan detaches nothing old" list_is ""
+failing fail-skiptr tr '\n'
+fresh
+printf 'package:com.example.o1  installer=com.android.vending\n' >"$PD_TEST_PM"
+pd autodetach on
+pd autoskip add com.example.inst
+printf 'package:com.example.o1  installer=com.android.vending\npackage:com.example.n  installer=com.example.inst\n' >"$PD_TEST_PM"
+PATH="$STUBS/fail-skiptr:$PATH" pd scan
+check "scan, auto-skip list unreadable: app of a skipped installer not detached" list_is ""
+check "scan, auto-skip list unreadable: seen.list kept" [ "$(cat "$PD_DATA_DIR/seen.list")" = com.example.o1 ]
 # Pruning auto.log of removed apps: whole names only (a name that is part
 # of an installed one is removed), skip lines stay
 fresh
