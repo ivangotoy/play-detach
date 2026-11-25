@@ -741,6 +741,14 @@ ln -s "$FU/storage/emulated/10" "$FU/sdcard"
 PD_FS_ROOT=$FU pd backup "$FU/sdcard/Download/u.txt"
 check "backup to /sdcard of user 10: written in /data/media/10" \
     sh -c 'grep -qx com.example.a "$1" && [ ! -e "$2" ] && [ ! -e "$3" ]' sh "$FU/data/media/10/Download/u.txt" "$FU/data/media/0/Download/u.txt" "$FU/storage/emulated/10/Download/u.txt"
+# A secondary user's /sdcard whose real folder /data/media/10 is missing:
+# written as given, never in user 0's /data/media/0
+FV=$C/rootv
+mkdir -p "$FV/data/media/0/Download" "$FV/storage/emulated/10/Download"
+ln -s "$FV/storage/emulated/10" "$FV/sdcard"
+PD_FS_ROOT=$FV pd backup "$FV/sdcard/Download/v.txt"
+check "backup to /sdcard of user 10 without /data/media/10: written as given" \
+    sh -c 'grep -qx com.example.a "$1" && [ ! -e "$2" ]' sh "$FV/storage/emulated/10/Download/v.txt" "$FV/data/media/0/Download/v.txt"
 if [ "$(id -u)" != 0 ]; then
     mkdir -p "$FL/data/media/0/RO" "$FL/storage/emulated/0/RO"
     "$REAL_CHMOD" 555 "$FL/data/media/0/RO"
