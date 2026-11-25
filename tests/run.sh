@@ -507,6 +507,7 @@ done
 # A seen.list or an auto-skip list that cannot be read must not make old
 # apps, or apps of a skipped installer, look new: the scan stops and the
 # next one tries again
+failing fail-grepq grep -qxF 2
 fresh
 printf 'package:com.example.o1  installer=com.example.inst\npackage:com.example.o2  installer=com.example.inst\n' >"$PD_TEST_PM"
 pd autodetach on
@@ -549,7 +550,6 @@ check "scan: auto.log keeps installed apps and skip lines only" [ "$(cat "$PD_DA
 1700000003 skip 7" ]
 # Pruning auto.log of removed apps: a failed cut or grep must not make an
 # installed app look removed
-failing fail-grepq grep -qxF 2
 for f in fail-cut fail-grepq; do
     fresh
     printf 'package:com.example.o1  installer=com.example.inst\n' >"$PD_TEST_PM"
