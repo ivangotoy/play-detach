@@ -201,14 +201,15 @@ exec $REAL_MV "\$@"
 EOF
 chmod 755 "$STUBS/rm" "$STUBS/rmdir" "$STUBS/sort" "$STUBS/chmod" "$STUBS/mv"
 
-# failing <folder> <command> [first argument]: $STUBS/<folder>/<command> ends
-# at once with status 1 and no output (a killed or broken stage of a pipe),
-# for every call or only for calls with that first argument; other calls run
-# the real command. Put the folder on PATH for one command: PATH="$STUBS/<folder>:$PATH" pd ...
+# failing <folder> <command> [first argument [status]]: $STUBS/<folder>/<command>
+# ends at once with status 1 (or the one given; grep: 2) and no output (a
+# killed or broken stage of a pipe), for every call or only for calls with
+# that first argument; other calls run the real command. Put the folder on
+# PATH for one command: PATH="$STUBS/<folder>:$PATH" pd ...
 failing() {
     mkdir -p "$STUBS/$1"
-    printf '#!/bin/sh\nif [ -z "%s" ] || [ "$1" = "%s" ]; then exit 1; fi\nexec %s "$@"\n' \
-        "$3" "$3" "$(command -v "$2")" >"$STUBS/$1/$2"
+    printf '#!/bin/sh\nif [ -z "%s" ] || [ "$1" = "%s" ]; then exit %s; fi\nexec %s "$@"\n' \
+        "$3" "$3" "${4:-1}" "$(command -v "$2")" >"$STUBS/$1/$2"
     "$REAL_CHMOD" 755 "$STUBS/$1/$2"
 }
 
@@ -414,6 +415,22 @@ pd add com.example.a
 printf 'package:com.example.old  installer=com.google.android.packageinstaller\npackage:com.example.new  installer=com.google.android.packageinstaller\n' >"$PD_TEST_PM"
 PATH="$STUBS/fail-readsed:$PATH" pd scan
 check "scan, list unreadable: list kept" list_is com.example.a
+# A failed stage between the read and the write (grep in remove, sed in
+# remove and restore) must not empty the list
+failing fail-grepv grep -vxF 2
+failing fail-blanksed sed '/^$/d'
+fresh
+pd add com.example.a com.example.b
+printf 'com.example.x\n' >"$C/in.txt"
+PATH="$STUBS/fail-grepv:$PATH" pd remove com.example.a
+check "remove, failed grep: exit 1" [ $? = 1 ]
+PATH="$STUBS/fail-blanksed:$PATH" pd remove com.example.a
+check "remove, failed sed: exit 0, one name left" sh -c '[ "$1" = 0 ] && [ "$(cat "$2")" = com.example.b ]' sh $? "$PD_DATA_DIR/detach.list"
+pd add com.example.a
+PATH="$STUBS/fail-blanksed:$PATH" pd restore "$C/in.txt"
+check "restore, failed sed: exit 0, file restored" sh -c '[ "$1" = 0 ] && [ "$(cat "$2")" = com.example.x ]' sh $? "$PD_DATA_DIR/detach.list"
+PATH="$STUBS/fail-grepv:$PATH" pd remove com.example.x
+check "remove, failed grep: list kept" list_is com.example.x
 # A list text longer than one command argument may be (an external printf
 # in mksh) must still reach the size check, never an empty list
 fresh

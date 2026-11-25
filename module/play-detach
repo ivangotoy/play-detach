@@ -673,8 +673,9 @@ case "$cmd" in
         current=$(read_list) || exit 1
         for p in "$@"; do
             current=$(printf '%s\n' "$current" | grep -vxF "$p")
+            [ $? -lt 2 ] || die "cannot read $LIST" # 1 = no line left
         done
-        printf '%s\n' "$current" | sed '/^$/d' | write_list user || exit 1
+        { [ -z "$current" ] || printf '%s\n' "$current"; } | write_list user || exit 1
         auto_backup
         restart_store
         for p in "$@"; do echo "Re-attached: $p"; done
@@ -758,7 +759,7 @@ case "$cmd" in
         [ -f "$file" ] || die "backup not found: $file"
         pkgs=$(read_pkg_file "$file") || exit 1
         list_lock
-        printf '%s\n' "$pkgs" | sed '/^$/d' | write_list restore || exit 1
+        { [ -z "$pkgs" ] || printf '%s\n' "$pkgs"; } | write_list restore || exit 1
         auto_backup
         restart_store
         echo "Restored $(read_list | wc -l) package(s) from $file"
