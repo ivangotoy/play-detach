@@ -790,7 +790,7 @@ check "backup ended by TERM while making its staging folder: stopped there" [ -e
 check "backup ended by TERM while making its staging folder: exit not 0" [ "$src" != 0 ]
 check "backup ended by TERM while making its staging folder: no staging folder left" \
     [ -z "$(ls -A "$PD_STORAGE/Download" | grep '^\.play-detach')" ]
- (the folder is resolved before the staging folder is used)
+# A relative backup path (the folder is resolved before the staging folder is used)
 (cd "$PD_STORAGE/Download" && pd backup rel.txt)
 check "backup to a relative path: written there" grep -qx com.example.a "$PD_STORAGE/Download/rel.txt"
 # A backup path through the FUSE view of internal storage is written in the
