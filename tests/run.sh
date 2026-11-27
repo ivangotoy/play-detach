@@ -177,6 +177,13 @@ if [ -n "\$PD_TEST_STAGE_UID" ]; then
     for a; do case "\${a##*/}" in .play-detach-backup.*)
         $REAL_MKDIR "\$@" && chown "\$PD_TEST_STAGE_UID" "\$a"; exit; esac; done
 fi
+# PD_TEST_MKDIR_FLAG: once the backup staging folder is made, waits (hold)
+if [ -n "\$PD_TEST_MKDIR_FLAG" ]; then
+    for a; do case "\${a##*/}" in .play-detach-backup.*)
+        $REAL_MKDIR "\$@" || exit
+        echo \$\$ >"\$PD_TEST_MKDIR_FLAG.reached"; i=0; while [ -e "\$PD_TEST_MKDIR_FLAG.wait" ] && [ \$i -lt 300 ]; do sleep 0.1; i=\$((i + 1)); done
+        exit 0; esac; done
+fi
 exec $REAL_MKDIR "\$@"
 EOF
 chmod 755 "$STUBS/mkdir"
@@ -747,6 +754,21 @@ if [ $? = 7 ]; then
 else
     skipped "backup ended by INT in its staging folder (INT is ignored here)"
 fi
+# The same with the signal coming while the staging folder is being made:
+# it is handled right after mkdir, before the folder is in use
+"$REAL_RM" -f "$C/k.reached"
+: >"$C/k.wait"
+PATH="$STUBS:$PATH" PD_BB=1 PD_TEST_MKDIR_FLAG=$C/k "$SH" "$ROOT/module/play-detach" backup "$PD_STORAGE/Download/sig.txt" >"$C/k.out" 2>&1 &
+echo $! >"$C/k.pid"
+kill_at "$C/k" TERM "$C/k.pid"
+killer=$!
+wait "$(cat "$C/k.pid")"
+src=$?
+wait "$killer"
+check "backup ended by TERM while making its staging folder: stopped there" [ -e "$C/k.reached" ]
+check "backup ended by TERM while making its staging folder: exit not 0" [ "$src" != 0 ]
+check "backup ended by TERM while making its staging folder: no staging folder left" \
+    [ -z "$(ls -A "$PD_STORAGE/Download" | grep '^\.play-detach')" ]
  (the folder is resolved before the staging folder is used)
 (cd "$PD_STORAGE/Download" && pd backup rel.txt)
 check "backup to a relative path: written there" grep -qx com.example.a "$PD_STORAGE/Download/rel.txt"

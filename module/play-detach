@@ -160,6 +160,7 @@ read_list() {
 # ends, and one older than $3 seconds is left over from a killed command.
 LOCKS=
 STAGE=
+NEWSTAGE=
 cleanup() {
     # A command ended by a signal or an error ($1, else the exit status)
     # can leave a temporary file between its write and its rename
@@ -171,6 +172,9 @@ cleanup() {
     IFS=' '
     for l in $LOCKS; do rm -rf "$l" "$l.takeover"; done
     [ -z "$STAGE" ] || rm -rf "$STAGE"
+    # a staging folder being made: removed only if empty (never a name that
+    # was there before, unless it is an empty folder)
+    [ -z "$NEWSTAGE" ] || rmdir "$NEWSTAGE" 2>/dev/null
 }
 trap cleanup EXIT
 # The EXIT trap is run here: mksh would end with status 0 after it
@@ -337,11 +341,15 @@ save_backup() {
         esac
         [ -n "$m" ] && [ -d "$m" ] && adir=$(cd -P "$m" && pwd -P)
     fi
-    mkdir "$adir/.play-detach-backup.$$" 2>/dev/null || {
+    # Named before mkdir: a signal during it is handled right after it
+    NEWSTAGE="$adir/.play-detach-backup.$$"
+    mkdir "$NEWSTAGE" 2>/dev/null || {
+        NEWSTAGE=
         echo "Error: cannot write $bfile" >&2
         return 1
     }
-    STAGE="$adir/.play-detach-backup.$$"
+    STAGE=$NEWSTAGE
+    NEWSTAGE=
     (
         cd -P "$STAGE" && [ "$(pwd -P)" = "$STAGE" ] && [ -O . ] || exit 1
         {
