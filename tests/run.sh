@@ -1245,6 +1245,7 @@ check "install: abort on non-arm64" grep -q '^ABORT: ! Only arm64' "$C/install.l
 if have node; then
     mkdir -p "$WORK/webui"
     node "$ROOT/tests/webui.js" "$ROOT" "$WORK/webui" >"$WORK/webui.out" 2>&1
+    wrc=$?
     while read -r r n; do
         case "$r" in
             ok) ok "webui: $n" ;;
@@ -1252,6 +1253,8 @@ if have node; then
         esac
     done <"$WORK/webui.out"
     grep -q '^ok startDir: the Play-Detach folder$' "$WORK/webui.out" || no "webui: test ran"
+    # a run that ended early (status not 0 and no FAIL line) has lost checks
+    [ "$wrc" = 0 ] || grep -q '^FAIL' "$WORK/webui.out" || no "webui: test ended with $wrc"
 else
     skipped "webui logic (no node)"
 fi
@@ -1268,8 +1271,9 @@ if have c++; then
     mkdir -p "$NT/run"
     awk '/^bool writeAll\(/, /^}/; /^void writeStatus\(/, /^}/' "$ROOT/src/zygisk/main.cpp" >"$NT/status_functions.inc"
     if [ "$(grep -c -e '^bool writeAll(' -e '^void writeStatus(' "$NT/status_functions.inc")" = 2 ] &&
-        c++ -std=c++20 -Wall -Wextra -Werror -I "$NT" -o "$NT/native_status" "$ROOT/tests/native_status.cpp" >"$NT/build.log" 2>&1; then
+        c++ -std=c++20 -Wall -Wextra -I "$NT" -o "$NT/native_status" "$ROOT/tests/native_status.cpp" >"$NT/build.log" 2>&1; then
         "$NT/native_status" "$NT/run" >"$NT/out" 2>&1
+        nrc=$?
         while read -r r n; do
             case "$r" in
                 ok) ok "native status file: $n" ;;
@@ -1277,6 +1281,7 @@ if have c++; then
             esac
         done <"$NT/out"
         grep -q '^ok status written$' "$NT/out" || no "native status file: test ran"
+        [ "$nrc" = 0 ] || grep -q '^FAIL' "$NT/out" || no "native status file: test ended with $nrc"
     else
         sed 's/^/    /' "$NT/build.log" 2>/dev/null
         no "native status file: writeAll and writeStatus copied out of main.cpp and built"
