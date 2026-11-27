@@ -1238,6 +1238,25 @@ install_module x86_64
 check "install: abort on non-arm64" grep -q '^ABORT: ! Only arm64' "$C/install.log"
 
 # ---------------------------------------------------------------------------
+# WebUI logic (module/webroot/app.js), with node: the functions are taken by
+# name from the real app.js and run with a fake root bridge (tests/webui.js)
+# ---------------------------------------------------------------------------
+
+if have node; then
+    mkdir -p "$WORK/webui"
+    node "$ROOT/tests/webui.js" "$ROOT" "$WORK/webui" >"$WORK/webui.out" 2>&1
+    while read -r r n; do
+        case "$r" in
+            ok) ok "webui: $n" ;;
+            FAIL) no "webui: $n" ;;
+        esac
+    done <"$WORK/webui.out"
+    grep -q '^ok startDir: the Play-Detach folder$' "$WORK/webui.out" || no "webui: test ran"
+else
+    skipped "webui logic (no node)"
+fi
+
+# ---------------------------------------------------------------------------
 # src/zygisk/main.cpp: the status file is written through a temporary file
 # that is removed when the write or the rename fails. writeAll() and
 # writeStatus() are copied out of the real main.cpp and built with the host
