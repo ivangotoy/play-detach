@@ -4,7 +4,7 @@
 # Runs the declared syntax checks and drives the real module scripts (the
 # play-detach command, service.sh, customize.sh) with stub Android commands
 # on PATH and a fake data folder (PD_DATA_DIR, PD_STORAGE, PD_TERMUX_BIN).
-# Checks that need bash, node, python3, git or unzip are skipped when the tool
+# Checks that need bash, node, python3, git, unzip or c++ are skipped when the tool
 # is missing. Not part of the module zip (build.sh packs module/ only).
 #
 #   TMPDIR         where the scratch folder is made (default /tmp)
@@ -1236,6 +1236,35 @@ check "install: link at the staging folder name: link left alone" [ -L "$PD_STOR
 fresh
 install_module x86_64
 check "install: abort on non-arm64" grep -q '^ABORT: ! Only arm64' "$C/install.log"
+
+# ---------------------------------------------------------------------------
+# src/zygisk/main.cpp: the status file is written through a temporary file
+# that is removed when the write or the rename fails. writeAll() and
+# writeStatus() are copied out of the real main.cpp and built with the host
+# C++ compiler (they need no Android headers); the module build is untouched.
+# ---------------------------------------------------------------------------
+
+if have c++; then
+    NT=$WORK/native
+    mkdir -p "$NT/run"
+    awk '/^bool writeAll\(/, /^}/; /^void writeStatus\(/, /^}/' "$ROOT/src/zygisk/main.cpp" >"$NT/status_functions.inc"
+    if [ "$(grep -c -e '^bool writeAll(' -e '^void writeStatus(' "$NT/status_functions.inc")" = 2 ] &&
+        c++ -std=c++20 -Wall -Wextra -Werror -I "$NT" -o "$NT/native_status" "$ROOT/tests/native_status.cpp" >"$NT/build.log" 2>&1; then
+        "$NT/native_status" "$NT/run" >"$NT/out" 2>&1
+        while read -r r n; do
+            case "$r" in
+                ok) ok "native status file: $n" ;;
+                FAIL) no "native status file: $n" ;;
+            esac
+        done <"$NT/out"
+        grep -q '^ok status written$' "$NT/out" || no "native status file: test ran"
+    else
+        sed 's/^/    /' "$NT/build.log" 2>/dev/null
+        no "native status file: writeAll and writeStatus copied out of main.cpp and built"
+    fi
+else
+    skipped "native status file (no c++)"
+fi
 
 # ---------------------------------------------------------------------------
 # .forgejo/module-ci.sh release step, offline (local bare repo, curl stub)
