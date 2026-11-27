@@ -211,6 +211,10 @@ if [ -n "\$PD_TEST_MV_LOG" ]; then
     src="\$(cd -P "\${src%/*}" 2>/dev/null && pwd -P)/\${src##*/}"
     echo "\$src" >>"\$PD_TEST_MV_LOG"
 fi
+# PD_TEST_MV_FLAG: waits like the rm, rmdir and sort above (hold)
+if [ -n "\$PD_TEST_MV_FLAG" ]; then
+    echo \$\$ >"\$PD_TEST_MV_FLAG.reached"; i=0; while [ -e "\$PD_TEST_MV_FLAG.wait" ] && [ \$i -lt 300 ]; do sleep 0.1; i=\$((i + 1)); done
+fi
 exec $REAL_MV "\$@"
 EOF
 chmod 755 "$STUBS/rm" "$STUBS/rmdir" "$STUBS/sort" "$STUBS/chmod" "$STUBS/mv"
@@ -699,7 +703,51 @@ mkdir "$C/decoy"
 check "backup, staging folder swapped for a link: refused" [ $? = 1 ]
 check "backup, staging folder swapped for a link: nothing made through it" sh -c '! grep -q "/decoy/" "$1" 2>/dev/null && [ -z "$(ls -A "$2")" ]' sh "$C/mv.log" "$C/decoy/stage"
 "$REAL_RM" -f "$PD_STORAGE/Download"/.play-detach-backup.*
-# A relative backup path (the folder is resolved before the staging folder is used)
+# A backup ended by a signal while its staging folder is in use (stopped in
+# the mv that moves the backup out of it) fails and leaves no staging folder.
+# TERM to a background command; INT to a foreground one (a background job
+# has INT ignored), only where this shell delivers INT to its children.
+stage_signal_check() {
+    check "backup ended by $1 in its staging folder: stopped there" [ -e "$C/s.reached" ]
+    check "backup ended by $1 in its staging folder: exit not 0" [ "$2" != 0 ]
+    check "backup ended by $1 in its staging folder: no staging folder left" \
+        [ -z "$(ls -A "$PD_STORAGE/Download" | grep '^\.play-detach')" ]
+}
+# kill_at <flag> <signal> <pid file>: in the background, sends the signal to
+# the pid in the file once <flag>.reached exists, then ends the hold
+kill_at() {
+    (
+        i=0
+        while [ ! -e "$1.reached" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+        kill -"$2" "$(cat "$3")" 2>/dev/null
+        "$REAL_RM" -f "$1.wait"
+    ) &
+}
+"$REAL_RM" -f "$C/s.reached"
+: >"$C/s.wait"
+PATH="$STUBS:$PATH" PD_BB=1 PD_TEST_MV_FLAG=$C/s "$SH" "$ROOT/module/play-detach" backup "$PD_STORAGE/Download/sig.txt" >"$C/s.out" 2>&1 &
+echo $! >"$C/s.pid"
+kill_at "$C/s" TERM "$C/s.pid"
+killer=$!
+wait "$(cat "$C/s.pid")"
+src=$?
+wait "$killer"
+stage_signal_check TERM "$src"
+"$SH" -c 'trap "exit 7" INT; kill -INT $$; exit 0'
+if [ $? = 7 ]; then
+    "$REAL_RM" -f "$C/s.reached" "$C/s.pid"
+    : >"$C/s.wait"
+    kill_at "$C/s" INT "$C/s.pid"
+    killer=$!
+    PATH="$STUBS:$PATH" PD_BB=1 PD_TEST_MV_FLAG=$C/s "$SH" -c 'echo $$ >"$1"; shift; exec "$@"' sh "$C/s.pid" \
+        "$SH" "$ROOT/module/play-detach" backup "$PD_STORAGE/Download/sig.txt" >"$C/s.out" 2>&1
+    src=$?
+    wait "$killer"
+    stage_signal_check INT "$src"
+else
+    skipped "backup ended by INT in its staging folder (INT is ignored here)"
+fi
+ (the folder is resolved before the staging folder is used)
 (cd "$PD_STORAGE/Download" && pd backup rel.txt)
 check "backup to a relative path: written there" grep -qx com.example.a "$PD_STORAGE/Download/rel.txt"
 # A backup path through the FUSE view of internal storage is written in the
