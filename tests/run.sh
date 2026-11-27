@@ -1320,9 +1320,9 @@ fi
 # module-ci.sh raises it above the update.json on main and the newest
 # published release when it is not (tests/release.sh)
 off=$(sed -n 's/^VERSION_CODE_OFFSET=//p' "$ROOT/.forgejo/module-ci.conf")
-# 4: the fork already released versionCode 15 (module.prop 12 + 3), so the
+# 5: the fork already released versionCode 17 (module.prop 13 + 4), so the
 # next release of the same upstream version must be above that
-check "module-ci.conf: release versionCode above the last fork release" [ "${off:-0}" -ge 4 ]
+check "module-ci.conf: release versionCode above the last fork release" [ "${off:-0}" -ge 5 ]
 
 if have bash && have git && have python3 && have unzip && have sha256sum; then
     mkdir -p "$WORK/release" "$STUBS/release"
