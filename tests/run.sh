@@ -177,9 +177,10 @@ if [ -n "\$PD_TEST_STAGE_UID" ]; then
     for a; do case "\${a##*/}" in .play-detach-backup.*)
         $REAL_MKDIR "\$@" && chown "\$PD_TEST_STAGE_UID" "\$a"; exit; esac; done
 fi
-# PD_TEST_MKDIR_FLAG: once the backup staging folder is made, waits (hold)
+# PD_TEST_MKDIR_FLAG: once the backup staging folder or the list lock is
+# made, waits (hold)
 if [ -n "\$PD_TEST_MKDIR_FLAG" ]; then
-    for a; do case "\${a##*/}" in .play-detach-backup.*)
+    for a; do case "\${a##*/}" in .play-detach-backup.* | list.lock)
         $REAL_MKDIR "\$@" || exit
         echo \$\$ >"\$PD_TEST_MKDIR_FLAG.reached"; i=0; while [ -e "\$PD_TEST_MKDIR_FLAG.wait" ] && [ \$i -lt 300 ]; do sleep 0.1; i=\$((i + 1)); done
         exit 0; esac; done
@@ -790,6 +791,39 @@ check "backup ended by TERM while making its staging folder: stopped there" [ -e
 check "backup ended by TERM while making its staging folder: exit not 0" [ "$src" != 0 ]
 check "backup ended by TERM while making its staging folder: no staging folder left" \
     [ -z "$(ls -A "$PD_STORAGE/Download" | grep '^\.play-detach')" ]
+# A change ended by a signal while it makes the list lock (stopped in that
+# mkdir, after the lock is made) fails and leaves no lock: TERM to a
+# background command, INT to a foreground one where INT is delivered
+lock_signal_check() {
+    check "add ended by $1 while making the list lock: stopped there" [ -e "$C/m.reached" ]
+    check "add ended by $1 while making the list lock: exit not 0" [ "$2" != 0 ]
+    check "add ended by $1 while making the list lock: no lock left" [ ! -e "$PD_DATA_DIR/list.lock" ]
+}
+"$REAL_RM" -f "$C/m.reached"
+: >"$C/m.wait"
+PATH="$STUBS:$PATH" PD_BB=1 PD_TEST_MKDIR_FLAG=$C/m "$SH" "$ROOT/module/play-detach" add com.example.m >"$C/m.out" 2>&1 &
+echo $! >"$C/m.pid"
+kill_at "$C/m" TERM "$C/m.pid"
+killer=$!
+wait "$(cat "$C/m.pid")"
+src=$?
+wait "$killer"
+lock_signal_check TERM "$src"
+"$SH" -c 'trap "exit 7" INT; kill -INT $$; exit 0'
+if [ $? = 7 ]; then
+    "$REAL_RM" -rf "$C/m.reached" "$C/m.pid" "$PD_DATA_DIR/list.lock"
+    : >"$C/m.wait"
+    kill_at "$C/m" INT "$C/m.pid"
+    killer=$!
+    PATH="$STUBS:$PATH" PD_BB=1 PD_TEST_MKDIR_FLAG=$C/m "$SH" -c 'echo $$ >"$1"; shift; exec "$@"' sh "$C/m.pid" \
+        "$SH" "$ROOT/module/play-detach" add com.example.m >"$C/m.out" 2>&1
+    src=$?
+    wait "$killer"
+    lock_signal_check INT "$src"
+else
+    skipped "add ended by INT while making the list lock (INT is ignored here)"
+fi
+"$REAL_RM" -rf "$PD_DATA_DIR/list.lock"
 # A relative backup path (the folder is resolved before the staging folder is used)
 (cd "$PD_STORAGE/Download" && pd backup rel.txt)
 check "backup to a relative path: written there" grep -qx com.example.a "$PD_STORAGE/Download/rel.txt"

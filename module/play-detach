@@ -188,14 +188,28 @@ cleanup() {
 }
 trap cleanup EXIT
 # The EXIT trap is run here: mksh would end with status 0 after it
-trap 'trap - EXIT; cleanup 1; exit 1' INT TERM HUP
+on_signal() {
+    trap - EXIT
+    cleanup 1
+    exit 1
+}
+trap on_signal INT TERM HUP
 
 # take_lock <dir> <tries, 0.1 s apart> <stale after seconds>
 take_lock() {
     l=$1
     tries=$2
     mkdir -p "$DATA_DIR" 2>/dev/null
-    while ! mkdir "$l" 2>/dev/null; do
+    while :; do
+        # A signal while the lock is made is handled once the lock is
+        # recorded: mkdir runs with the signals ignored, so its status
+        # always tells whether this command made the lock
+        SIG=
+        trap 'SIG=1' INT TERM HUP
+        if (trap '' INT TERM HUP; exec mkdir "$l") 2>/dev/null; then got=1; LOCKS="$LOCKS $l"; else got=; fi
+        trap on_signal INT TERM HUP
+        [ -z "$SIG" ] || on_signal
+        [ -z "$got" ] || return 0
         # inode.time names this lock: a lock made after it has another one
         id=$(stat -c %i.%Y "$l" 2>/dev/null)
         if [ -n "$id" ] && [ $(($(date +%s) - ${id#*.})) -gt "$3" ]; then
@@ -222,7 +236,6 @@ take_lock() {
         tries=$((tries - 1))
         sleep 0.1
     done
-    LOCKS="$LOCKS $l"
 }
 
 # Every change of the list holds this lock from reading the old list to
