@@ -67,9 +67,17 @@ async function main() {
 
   // sq: any text reaches the shell as one argument, never as shell code
   const { sq } = load(s1, shExec);
-  for (const text of ["it's", "$(touch pwned)", "`touch pwned`", "a'b'\\'c", "line\nline", ""]) {
+  const texts = [
+    ["a quote", "it's"],
+    ["a command substitution", "$(touch pwned)"],
+    ["backquotes", "`touch pwned`"],
+    ["quotes and a backslash", "a'b'\\'c"],
+    ["a newline", "line\nline"],
+    ["an empty text", ""],
+  ];
+  for (const [label, text] of texts) {
     const r = cp.spawnSync("sh", ["-c", `printf %s ${sq(text)}`], { cwd: work, encoding: "utf8" });
-    check(`sq: ${JSON.stringify(text)} passed as text`, r.status === 0 && r.stdout === text);
+    check(`sq: ${label} passed as text`, r.status === 0 && r.stdout === text);
   }
   check("sq: nothing ran from a quoted text", !fs.existsSync(path.join(work, "pwned")));
 }
