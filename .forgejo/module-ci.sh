@@ -187,7 +187,9 @@ load_conf "$REL/module-ci.conf"
 regular() { [ -f "$1" ] && [ ! -L "$1" ] || die "$1 is not a regular file"; }
 regular "$OUT/src"; regular "$OUT/desc"; regular "$OUT/module.zip"
 { read -r SRC_SHA; read -r UP_SHA; } < "$OUT/src"
-DESC="$(head -c 200 "$OUT/desc" | head -n1 | tr -cd '[:print:]')"
+# sed reads to the end: a reader that quits after one line can end the writer with SIGPIPE,
+# which pipefail turns into a silent exit
+DESC="$(head -c 200 "$OUT/desc" | sed -n 1p | tr -cd '[:print:]')"
 [[ "$SRC_SHA" =~ ^[0-9a-f]{40}$ ]] || die "bad source sha"
 if [ "$SRC_SHA" != "$BASE_SHA" ]; then
     [[ "$UP_SHA" =~ ^[0-9a-f]{40}$ ]] || die "bad upstream sha"

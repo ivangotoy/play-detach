@@ -81,6 +81,20 @@ esac
 EOF
 chmod 755 "$STUBS/curl"
 
+# head stub: with PD_TEST_SLOW_HEAD set, "head -c N file" writes the file a line at a
+# time with a pause, as a head that writes in several pieces can; a reader that has
+# quit by then ends it (SIGPIPE, or status 141 when SIGPIPE is ignored). Else the real head.
+REAL_HEAD=$(command -v head)
+cat >"$STUBS/head" <<EOF
+#!/usr/bin/env bash
+if [ -n "\${PD_TEST_SLOW_HEAD:-}" ] && [ "\$1" = -c ]; then
+    while IFS= read -r line; do printf '%s\\n' "\$line" || exit 141; sleep 0.3; done <"\$3"
+    exit 0
+fi
+exec "$REAL_HEAD" "\$@"
+EOF
+chmod 755 "$STUBS/head"
+
 # git wrapper: records argv and whether the token came in through
 # GIT_CONFIG_* (never through argv), then runs the real git
 REAL_GIT=$(command -v git)
@@ -134,7 +148,7 @@ release_case() {
     fi
     [ -z "${RELEASES:-}" ] || printf '%s' "$RELEASES" >"$d/state/releases.json"
     printf '%s\n\n' "$BASE" >"$d/src/.ci-out/src"
-    echo "test build" >"$d/src/.ci-out/desc"
+    if [ -n "${SLOW_HEAD:-}" ]; then printf 'test build\nsecond line\n'; else echo "test build"; fi >"$d/src/.ci-out/desc"
     python3 -I - "$d/src/.ci-out/module.zip" "$built" <<'PY'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "w") as z:
@@ -147,7 +161,7 @@ PY
     echo "$TAG/mod-$TAG.zip" >"$d/state/tag"
     (
         cd "$d/run" &&
-            PATH="$STUBS:$PATH" CURL_STATE="$d/state" CURL_TOKEN=$TOKEN CURL_FAIL=${3:-} \
+            PATH="$STUBS:$PATH" CURL_STATE="$d/state" CURL_TOKEN=$TOKEN CURL_FAIL=${3:-} PD_TEST_SLOW_HEAD=${SLOW_HEAD:-} \
                 SERVER_URL="$d/forge" REPOSITORY=$REPOSITORY \
                 BASE_SHA=$BASE RELEASE_TOKEN=$TOKEN RUN_NUMBER=3 \
                 timeout 120 bash "$ROOT/.forgejo/module-ci.sh" release "$d/src"
@@ -241,6 +255,14 @@ check "draft reply lost: one draft request, nothing deleted or published" \
     sh -c '[ "$(awk -F"\t" -v u="$2" "\$1 == \"POST\" && \$2 == u" "$1/state/calls.tsv" | wc -l)" = 1 ] && [ ! -f "$1/state/deleted" ] && [ ! -f "$1/state/published" ]' \
     sh "$D" "$D/forge/api/v1/repos/$REPOSITORY/releases"
 check "draft reply lost: tag logged for a check by hand" grep -qF "the draft request for $TAG failed or its reply was lost" "$D/log"
+
+# The build description is read up to its first line: a head that writes it in
+# pieces must not end the release (pipefail and SIGPIPE ended it with no message)
+SLOW_HEAD=1 release_case slowdesc v1.0
+check "release, description written in pieces: exit 0" [ "$RC" = 0 ]
+check "release, description written in pieces: published" [ -f "$D/state/published" ]
+check "release, description written in pieces: first line only in the release" \
+    python3 -I -c 'import json,sys;b=json.load(open(sys.argv[1]))["body"];sys.exit(0 if "(test build)" in b and "second line" not in b else 1)' "$D/state/draft.json"
 
 # The released versionCode is above what is already offered: the update.json at
 # main's tip (committed here after the dispatched commit, so a read of that commit
