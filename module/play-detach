@@ -170,7 +170,17 @@ cleanup() {
     # now; removed only by the holder of that lock
     # (a signal can come while a loop has IFS set to a newline)
     IFS=' '
-    for l in $LOCKS; do rm -rf "$l" "$l.takeover"; done
+    for l in $LOCKS; do
+        # <lock>.takeover.<id> of an earlier lock of this name (left by a
+        # waiter killed between making and removing it): that lock is gone.
+        # The one named after the lock held now is kept (a waiter may use it).
+        set +f
+        for g in "$l".takeover.*; do
+            [ -e "$g" ] && [ "$g" != "$l.takeover.$(stat -c %i.%Y "$l" 2>/dev/null)" ] && rm -rf "$g"
+        done
+        set -f
+        rm -rf "$l" "$l.takeover"
+    done
     [ -z "$STAGE" ] || rm -rf "$STAGE"
     # a staging folder being made: removed only if empty (never a name that
     # was there before, unless it is an empty folder)
@@ -203,7 +213,7 @@ take_lock() {
                 if [ "$(stat -c %i.%Y "$l" 2>/dev/null)" = "$id" ]; then
                     rm -rf "$l" "$l.takeover.$id"
                 else
-                    rmdir "$g"
+                    rmdir "$g" 2>/dev/null
                 fi
                 continue
             fi

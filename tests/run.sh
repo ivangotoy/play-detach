@@ -355,6 +355,27 @@ mkdir "$PD_DATA_DIR/list.lock.takeover"
 pd add com.example.a
 check "old-version takeover folder left: add works" list_is com.example.a
 check "old-version takeover folder left: removed by the lock holder" [ ! -e "$PD_DATA_DIR/list.lock.takeover" ]
+# A takeover folder of an earlier lock (another inode.time, left by a waiter
+# killed while it held it) is removed by the next holder of that lock; the
+# one named after the lock held now is kept (a waiter may be using it). The
+# holder is stopped in its list change to make that one.
+fresh
+mkdir -p "$PD_DATA_DIR/list.lock.takeover.1.1700000000/x"
+"$REAL_RM" -f "$C/o.reached"
+: >"$C/o.wait"
+PATH="$STUBS:$PATH" PD_BB=1 PD_TEST_SORT_FLAG=$C/o "$SH" "$ROOT/module/play-detach" add com.example.a >"$C/o.out" 2>&1 &
+opid=$!
+i=0
+while [ ! -e "$C/o.reached" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done
+own="$PD_DATA_DIR/list.lock.takeover.$(stat -c %i.%Y "$PD_DATA_DIR/list.lock")"
+mkdir "$own"
+"$REAL_RM" -f "$C/o.wait"
+wait "$opid"
+check "takeover folders of an earlier lock: add works" sh -c '[ "$1" = 0 ] && [ "$(cat "$2")" = com.example.a ]' sh $? "$PD_DATA_DIR/detach.list"
+check "takeover folders of an earlier lock: removed by the next holder" [ ! -e "$PD_DATA_DIR/list.lock.takeover.1.1700000000" ]
+check "takeover folder of the lock held: kept" [ -d "$own" ]
+check "takeover folders: the holder stopped in its change" [ -e "$C/o.reached" ]
+"$REAL_RM" -rf "$own"
 
 # A command killed while taking a stale lock over leaves its takeover
 # behind. Two waiters then: B stops right before it would remove that old
