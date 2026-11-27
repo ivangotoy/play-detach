@@ -25,7 +25,7 @@ cat >"$STUBS/curl" <<'EOF'
 # curl stub for the Forgejo release API. State in $CURL_STATE.
 S=$CURL_STATE
 printf '%s\n' "$*" >>"$S/argv.log"
-m=GET out="" w="" url="" upload="" ct=- mt=- retry=- auth=none hfile=- hmode=-
+m=GET out="" w="" url="" upload="" data="" ct=- mt=- retry=- auth=none hfile=- hmode=-
 while [ $# -gt 0 ]; do
     case "$1" in
         -X) m=$2; shift ;;
@@ -44,7 +44,7 @@ while [ $# -gt 0 ]; do
                 Authorization:*) auth=literal ;;
             esac
             shift ;;
-        -d) shift ;;
+        -d) data=$2; shift ;;
         -*) ;;
         *) url=$1 ;;
     esac
@@ -56,10 +56,14 @@ api="$SERVER_URL/api/v1/repos/$REPOSITORY"
 web="$SERVER_URL/$REPOSITORY"
 say() { if [ -n "$out" ]; then printf '%s' "$1" >"$out"; else printf '%s' "$1"; fi; }
 case "$m $url" in
+    # the release list: $S/releases.json, else none; "listfail": the call fails
+    "GET $api/releases?"*)
+        [ "$CURL_FAIL" = listfail ] && exit 22
+        if [ -f "$S/releases.json" ]; then say "$(cat "$S/releases.json")"; else say "[]"; fi ;;
     "GET $api/releases/tags/"* | "GET $api/tags/"*)
         if [ -n "$w" ]; then printf 404; exit 0; fi
         say "{\"commit\": {\"sha\": \"$(cat "$S/base")\"}}" ;;
-    "POST $api/releases") [ "$CURL_FAIL" = draftlost ] && exit 28; say '{"id": 7}' ;;
+    "POST $api/releases") printf '%s' "$data" >"$S/draft.json"; [ "$CURL_FAIL" = draftlost ] && exit 28; say '{"id": 7}' ;;
     "POST $api/releases/7/assets?name="*)
         cp "$upload" "$S/asset.zip" && say '{"id": 9}' ;;
     "GET $api/releases/7/assets/9")
@@ -95,11 +99,13 @@ exec "$REAL_GIT" "\$@"
 EOF
 chmod 755 "$STUBS/git"
 
-# release_case <name> <built version> [side|back|publishlost|draftlost]: a forge repo with a
-# fork-owned module.prop (SYNC_ROOT_PROP), a built zip with that version, one
-# release run. With "side" the dispatched commit is on a branch other than
+# release_case <name> <built version> [side|back|publishlost|draftlost|listfail]: a forge repo
+# with a fork-owned module.prop (SYNC_ROOT_PROP), a built zip with that version (versionCode 5,
+# offset 0), one release run. With "side" the dispatched commit is on a branch other than
 # main; with "back" the asset downloaded back is corrupt (fails after the draft);
-# with "publishlost" or "draftlost" the publish or draft request gets no reply.
+# with "publishlost" or "draftlost" the publish or draft request gets no reply; with
+# "listfail" the release list cannot be read. SEED_FEED: an update.json committed on main
+# after the dispatched commit; RELEASES: the forge's release list (JSON).
 release_case() {
     local built=$2 d="$W/$1"
     rm -rf "$d"
@@ -120,6 +126,13 @@ release_case() {
     fi
     BASE=$(git -C "$d/seed" rev-parse HEAD)
     echo "$BASE" >"$d/state/base"
+    if [ -n "${SEED_FEED:-}" ]; then
+        printf '%s\n' "$SEED_FEED" >"$d/seed/.forgejo/update.json"
+        git -C "$d/seed" add .forgejo/update.json
+        git -C "$d/seed" commit -qm feed
+        git -C "$d/seed" push -q "$d/forge/$REPOSITORY.git" main
+    fi
+    [ -z "${RELEASES:-}" ] || printf '%s' "$RELEASES" >"$d/state/releases.json"
     printf '%s\n\n' "$BASE" >"$d/src/.ci-out/src"
     echo "test build" >"$d/src/.ci-out/desc"
     python3 -I - "$d/src/.ci-out/module.zip" "$built" <<'PY'
@@ -228,6 +241,47 @@ check "draft reply lost: one draft request, nothing deleted or published" \
     sh -c '[ "$(awk -F"\t" -v u="$2" "\$1 == \"POST\" && \$2 == u" "$1/state/calls.tsv" | wc -l)" = 1 ] && [ ! -f "$1/state/deleted" ] && [ ! -f "$1/state/published" ]' \
     sh "$D" "$D/forge/api/v1/repos/$REPOSITORY/releases"
 check "draft reply lost: tag logged for a check by hand" grep -qF "the draft request for $TAG failed or its reply was lost" "$D/log"
+
+# The released versionCode is above what is already offered: the update.json at
+# main's tip (committed here after the dispatched commit, so a read of that commit
+# finds none) and the newest published release; one that cannot be read stops the
+# release before the draft request
+main_vc() {
+    git --git-dir="$D/forge/$REPOSITORY.git" show main:.forgejo/update.json | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["versionCode"])'
+}
+released_vc() {
+    [ "$(main_vc)" = "$1" ] &&
+        [ "$(unzip -p "$D/state/asset.zip" module.prop | sed -n 's/^versionCode=//p')" = "$1" ] &&
+        python3 -I -c 'import json,sys;sys.exit(0 if "\nversionCode %s\n" % sys.argv[2] in json.load(open(sys.argv[1]))["body"] else 1)' "$D/state/draft.json" "$1"
+}
+# refused with the error $1, no draft requested, nothing published
+no_draft_request() {
+    [ "$RC" != 0 ] && grep -qF "ERROR: $1" "$D/log" && ! grep -qs '^POST' "$D/state/calls.tsv" && [ ! -f "$D/state/published" ]
+}
+FEED5='{"version": "v1.0-ci2", "versionCode": 5, "zipUrl": "https://example.invalid/a.zip", "changelog": ""}'
+SEED_FEED=$FEED5 release_case vcfeed v1.0
+check "release, update.json on main at the built versionCode: exit 0" [ "$RC" = 0 ]
+check "release, update.json on main at the built versionCode: released one above it" released_vc 6
+# the list: a release body as this script posts it (from the case above) with
+# versionCode 9, a newer one without a versionCode line, a draft with a higher one
+LIST=$(python3 -I -c '
+import json,sys
+body = json.load(open(sys.argv[1]))["body"].replace("\nversionCode 6\n", "\nversionCode 9\n")
+assert "\nversionCode 9\n" in body
+print(json.dumps([{"id": 3, "draft": False, "body": body},
+                  {"id": 8, "draft": False, "body": "hand-made release"},
+                  {"id": 9, "draft": True, "body": "versionCode 50"}]))' "$W/vcfeed/state/draft.json")
+SEED_FEED=$FEED5 RELEASES=$LIST release_case vclist v1.0
+check "release, newest published release above update.json: exit 0" [ "$RC" = 0 ]
+check "release, newest published release above update.json: released one above it (drafts not counted)" released_vc 10
+SEED_FEED='not json' release_case vcbadfeed v1.0
+check "release, update.json on main not JSON: refused before the draft" no_draft_request ".forgejo/update.json on main has no integer versionCode"
+SEED_FEED='{"versionCode": "7"}' release_case vcstrfeed v1.0
+check "release, update.json versionCode not an integer: refused before the draft" no_draft_request ".forgejo/update.json on main has no integer versionCode"
+release_case vclistfail v1.0 listfail
+check "release, release list unreadable: refused before the draft" no_draft_request "cannot read the release list"
+RELEASES='{"message": "not found"}' release_case vclistobj v1.0
+check "release, release list not a list: refused before the draft" no_draft_request "cannot read the release list"
 
 # Every curl call is time-limited, and only reads are retried (a retried
 # POST/PATCH/DELETE can repeat a change the forge already made)

@@ -1295,7 +1295,9 @@ fi
 # ---------------------------------------------------------------------------
 
 # The fork releases above the upstream build it replaces, so root managers
-# offer it as an update: released versionCode = module.prop's + offset
+# offer it as an update: released versionCode = module.prop's + offset, and
+# module-ci.sh raises it above the update.json on main and the newest
+# published release when it is not (tests/release.sh)
 off=$(sed -n 's/^VERSION_CODE_OFFSET=//p' "$ROOT/.forgejo/module-ci.conf")
 # 4: the fork already released versionCode 15 (module.prop 12 + 3), so the
 # next release of the same upstream version must be above that
