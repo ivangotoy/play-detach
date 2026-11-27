@@ -18,7 +18,7 @@
 #   ZIP_PREFIX                      release zip name prefix
 #   VERSION_CODE_FLOOR              lowest versionCode allowed to release
 #   VERSION_CODE_OFFSET             added to the built versionCode (default 0); the release is then
-#                                   raised to one above the update.json at main's tip and the newest
+#                                   raised to one above the update.json at main's tip and every
 #                                   published release (their body line "versionCode N") when not above them
 #   UPDATE_JSON_PATH                update.json path in main (default .forgejo/update.json)
 #   SYNC_ROOT_PROP                  fork-owned module.prop in main kept at the released version
@@ -54,19 +54,19 @@ except ValueError: sys.exit("update.json is not JSON")
 v=d.get("versionCode") if isinstance(d,dict) else None
 if type(v) is not int or v<0: sys.exit("update.json versionCode is not an integer")
 print(v)'; }
-# versionCode of the newest published release in a forge release list on stdin (JSON): the
-# highest release id whose body has a "versionCode N" line, 0 when none has; not a list: an error
+# highest versionCode of the published releases in a forge release list on stdin (JSON): from
+# the body line "versionCode N" (drafts and bodies without it are not counted, 0 when none
+# has one); not a list: an error
 release_vc() { python3 -I -c 'import json,re,sys
 try: d=json.load(sys.stdin)
 except ValueError: sys.exit("release list is not JSON")
 if not isinstance(d,list): sys.exit("release list is not a list")
-best=None
+best=0
 for r in d:
     if not isinstance(r,dict) or r.get("draft") is not False: continue
     m=re.search(r"^versionCode ([0-9]+)\r?$", str(r.get("body") or ""), re.M)
-    i=r.get("id")
-    if m and type(i) is int and (best is None or i>best[0]): best=(i,int(m.group(1)))
-print(best[1] if best else 0)'; }
+    if m: best=max(best,int(m.group(1)))
+print(best)'; }
 pack_paths() { (cd "$WORK" && zip -qr9 -X "$OUT/module.zip" "$@" -x '*/.gitkeep'); }
 load_conf() {
     UPSTREAM_URL="" UPSTREAM_BRANCH="" ZIP_PREFIX="${REPOSITORY#*/}" VERSION_CODE_FLOOR=0 VERSION_CODE_OFFSET=0
@@ -210,7 +210,7 @@ case "$BUILT_VC" in ''|*[!0-9]*) die "built versionCode '$BUILT_VC' is not a num
 VERSION="$(printf '%s' "$BUILT_VERSION" | sed -E 's/-(fork|ci)[0-9]+$//')-ci$RUN_NUMBER"
 VC=$((BUILT_VC + VERSION_CODE_OFFSET))
 # Never at or below what is already offered: the update.json at main's tip (this clone) and the
-# newest published release. Read before anything is published; one that cannot be read stops here.
+# published releases. Read before anything is published; one that cannot be read stops here.
 LAST_VC=0
 if git cat-file -e "HEAD:$UPDATE_JSON_PATH" 2>/dev/null; then
     LAST_VC="$(git show "HEAD:$UPDATE_JSON_PATH" | feed_vc)" || die "$UPDATE_JSON_PATH on main has no integer versionCode"
@@ -220,7 +220,7 @@ case "$LAST_VC" in ''|*[!0-9]*) die "versionCode '$LAST_VC' of $UPDATE_JSON_PATH
 case "$REL_VC" in ''|*[!0-9]*) die "versionCode '$REL_VC' of the release list is not a number" ;; esac
 [ "$REL_VC" -le "$LAST_VC" ] || LAST_VC=$REL_VC
 if [ "$VC" -le "$LAST_VC" ]; then
-    log "versionCode $VC is not above $LAST_VC (update.json on main or the newest release): using $((LAST_VC + 1))"
+    log "versionCode $VC is not above $LAST_VC (update.json on main or a published release): using $((LAST_VC + 1))"
     VC=$((LAST_VC + 1))
 fi
 [ "$VC" -ge "$VERSION_CODE_FLOOR" ] || die "versionCode $VC is below the floor $VERSION_CODE_FLOOR"

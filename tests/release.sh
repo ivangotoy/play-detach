@@ -244,7 +244,7 @@ check "draft reply lost: tag logged for a check by hand" grep -qF "the draft req
 
 # The released versionCode is above what is already offered: the update.json at
 # main's tip (committed here after the dispatched commit, so a read of that commit
-# finds none) and the newest published release; one that cannot be read stops the
+# finds none) and every published release; one that cannot be read stops the
 # release before the draft request
 main_vc() {
     git --git-dir="$D/forge/$REPOSITORY.git" show main:.forgejo/update.json | python3 -I -c 'import json,sys;print(json.load(sys.stdin)["versionCode"])'
@@ -274,6 +274,15 @@ print(json.dumps([{"id": 3, "draft": False, "body": body},
 SEED_FEED=$FEED5 RELEASES=$LIST release_case vclist v1.0
 check "release, newest published release above update.json: exit 0" [ "$RC" = 0 ]
 check "release, newest published release above update.json: released one above it (drafts not counted)" released_vc 10
+# the highest versionCode counts, not the newest release: id 5 has 7, id 3 has 9
+LIST=$(python3 -I -c '
+import json,sys
+body = json.load(open(sys.argv[1]))["body"]
+print(json.dumps([{"id": 3, "draft": False, "body": body.replace("\nversionCode 6\n", "\nversionCode 9\n")},
+                  {"id": 5, "draft": False, "body": body.replace("\nversionCode 6\n", "\nversionCode 7\n")}]))' "$W/vcfeed/state/draft.json")
+SEED_FEED=$FEED5 RELEASES=$LIST release_case vcmax v1.0
+check "release, an older release with a higher versionCode: exit 0" [ "$RC" = 0 ]
+check "release, an older release with a higher versionCode: released one above the highest" released_vc 10
 SEED_FEED='not json' release_case vcbadfeed v1.0
 check "release, update.json on main not JSON: refused before the draft" no_draft_request ".forgejo/update.json on main has no integer versionCode"
 SEED_FEED='{"versionCode": "7"}' release_case vcstrfeed v1.0
