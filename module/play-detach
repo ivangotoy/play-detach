@@ -17,11 +17,11 @@ fi
 umask 077
 set -f
 
-DATA_DIR=/data/adb/play-detach
+DATA_DIR=${PD_DATA_DIR:-/data/adb/play-detach}
 LIST="$DATA_DIR/detach.list"
 # Internal storage as seen by root (/sdcard in file managers). Backups go to
 # the Play-Detach folder the installer creates, or to Download if it is gone.
-STORAGE=/data/media/0
+STORAGE=${PD_STORAGE:-/data/media/0}
 BACKUP_DIR="$STORAGE/Play-Detach"
 AUTO_NAME=play-detach-auto.txt
 STORE=com.android.vending
@@ -122,10 +122,18 @@ check_pkgs() {
     done
 }
 
+# Prints the lines of file $1 without CRs, blanks, comments and spaces at
+# the ends. Returns 1 when tr or sed fail: a lost read is not an empty file.
+clean_lines() {
+    { rd=$({ { tr -d '\r' <"$1" || echo tr >&3; } |
+        { sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' -e '/^#/d' || echo sed >&3; } >&4; } 3>&1); } 4>&1
+    [ -z "$rd" ]
+}
+
 # Prints the package lines of a file (no blanks or comments) after checking
 # each whole line, so "com.a com.b" on one line is rejected.
 read_pkg_file() {
-    out=$(tr -d '\r' <"$1" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' -e '/^#/d')
+    out=$(clean_lines "$1") || die "cannot read $1"
     old_ifs=$IFS
     IFS='
 '
@@ -142,35 +150,92 @@ read_pkg_file() {
 # Prints the current list, one package per line, without blanks or comments.
 read_list() {
     [ -f "$LIST" ] || return 0
-    tr -d '\r' <"$LIST" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e '/^$/d' -e '/^#/d'
+    clean_lines "$LIST" || {
+        echo "Error: cannot read $LIST" >&2
+        return 1
+    }
 }
 
 # Locks are directories (mkdir is atomic). They are removed when the command
 # ends, and one older than $3 seconds is left over from a killed command.
 LOCKS=
+STAGE=
+NEWSTAGE=
 cleanup() {
-    for l in $LOCKS; do rm -rf "$l"; done
+    # A command ended by a signal or an error ($1, else the exit status)
+    # can leave a temporary file between its write and its rename
+    [ "${1:-$?}" = 0 ] || rm -f "$LIST.tmp.$$" "$SEEN.tmp.$$" "$AUTO_LOG.tmp.$$" "$SKIP_FILE.tmp.$$" \
+        "$HISTORY.tmp.$$" "$STORE_FILE.tmp.$$" "$HOOK_FILE.tmp.$$"
+    # <lock>.takeover: the takeover folder of older versions, used by nobody
+    # now; removed only by the holder of that lock
+    # (a signal can come while a loop has IFS set to a newline)
+    IFS=' '
+    for l in $LOCKS; do
+        # <lock>.takeover.<id> of an earlier lock of this name (left by a
+        # waiter killed between making and removing it): that lock is gone.
+        # The one named after the lock held now is kept (a waiter may use it).
+        set +f
+        for g in "$l".takeover.*; do
+            [ -e "$g" ] && [ "$g" != "$l.takeover.$(stat -c %i.%Y "$l" 2>/dev/null)" ] && rm -rf "$g"
+        done
+        set -f
+        rm -rf "$l" "$l.takeover"
+    done
+    [ -z "$STAGE" ] || rm -rf "$STAGE"
+    # a staging folder being made: removed only if empty (never a name that
+    # was there before, unless it is an empty folder)
+    [ -z "$NEWSTAGE" ] || rmdir "$NEWSTAGE" 2>/dev/null
 }
 trap cleanup EXIT
-trap 'exit 1' INT TERM HUP
+# The EXIT trap is run here: mksh would end with status 0 after it
+on_signal() {
+    trap - EXIT
+    cleanup 1
+    exit 1
+}
+trap on_signal INT TERM HUP
 
 # take_lock <dir> <tries, 0.1 s apart> <stale after seconds>
 take_lock() {
     l=$1
     tries=$2
     mkdir -p "$DATA_DIR" 2>/dev/null
-    while ! mkdir "$l" 2>/dev/null; do
-        now=$(date +%s)
-        age=$((now - $(stat -c %Y "$l" 2>/dev/null || echo "$now")))
-        if [ "$age" -gt "$3" ]; then
-            rm -rf "$l"
-            continue
+    while :; do
+        # A signal while the lock is made is handled once the lock is
+        # recorded: mkdir runs with the signals ignored, so its status
+        # always tells whether this command made the lock
+        SIG=
+        trap 'SIG=1' INT TERM HUP
+        if (trap '' INT TERM HUP; exec mkdir "$l") 2>/dev/null; then got=1; LOCKS="$LOCKS $l"; else got=; fi
+        trap on_signal INT TERM HUP
+        [ -z "$SIG" ] || on_signal
+        [ -z "$got" ] || return 0
+        # inode.time names this lock: a lock made after it has another one
+        id=$(stat -c %i.%Y "$l" 2>/dev/null)
+        if [ -n "$id" ] && [ $(($(date +%s) - ${id#*.})) -gt "$3" ]; then
+            # One waiter at a time takes a stale lock over: the one that
+            # makes its takeover folder, which is named after the lock, and
+            # only while the lock is still that one. No waiter removes a
+            # takeover folder another one may use (it could be a new one):
+            # inside one older than $3 seconds, left by a killed command, the
+            # next one is made. The waiter that removes the lock removes them.
+            g="$l.takeover.$id"
+            while [ -d "$g" ] && [ $(($(date +%s) - $(stat -c %Y "$g" 2>/dev/null || date +%s))) -gt "$3" ]; do
+                g="$g/x"
+            done
+            if mkdir "$g" 2>/dev/null; then
+                if [ "$(stat -c %i.%Y "$l" 2>/dev/null)" = "$id" ]; then
+                    rm -rf "$l" "$l.takeover.$id"
+                else
+                    rmdir "$g" 2>/dev/null
+                fi
+                continue
+            fi
         fi
         [ "$tries" -gt 0 ] || return 1
         tries=$((tries - 1))
         sleep 0.1
     done
-    LOCKS="$LOCKS $l"
 }
 
 # Every change of the list holds this lock from reading the old list to
@@ -195,20 +260,35 @@ log_changes() {
 trim_history() {
     [ -f "$HISTORY" ] || return 0
     if [ "$(wc -l <"$HISTORY")" -gt 200 ]; then
-        tail -n 200 "$HISTORY" >"$HISTORY.tmp.$$" && mv -f "$HISTORY.tmp.$$" "$HISTORY"
+        # A change appends to the history under the list lock: when the list
+        # is busy, cut it at the next scan instead of losing that line. A scan
+        # that auto-detached already holds the lock and cuts it now.
+        case " $LOCKS " in
+        *" $DATA_DIR/list.lock "*) ;;
+        *) take_lock "$DATA_DIR/list.lock" 0 30 || return 0 ;;
+        esac
+        tail -n 200 "$HISTORY" >"$HISTORY.tmp.$$" && mv -f "$HISTORY.tmp.$$" "$HISTORY" || rm -f "$HISTORY.tmp.$$"
     fi
 }
 
 # Replaces the list with stdin (sorted, unique) using an atomic rename, so the
 # Play Store never reads a half-written file. $1 = who changed it (user, auto,
-# import, restore), kept in the history. Callers hold list_lock and must
-# check the result: in a pipeline die only ends this function's subshell.
+# import, restore), kept in the history. With $2 = merge the current list is
+# added to stdin here, where a failed read stops the write. Callers hold
+# list_lock and must check the result: in a pipeline die only ends this
+# function's subshell.
 write_list() {
     mkdir -p "$DATA_DIR" || die "cannot create $DATA_DIR"
     chmod 700 "$DATA_DIR"
     tmp="$LIST.tmp.$$"
-    sort -u >"$tmp" || {
+    # A failed sort and a failed write are both reported on fd 3: cat reports
+    # a failed write (busybox sort does not for one line), and the text never
+    # becomes a command argument (too long for an external printf).
+    st=$({ { { [ "$2" != merge ] || read_list 2>/dev/null || echo read >&3; cat; } | sort -u || echo sort >&3; } |
+        cat >"$tmp" || echo write >&3; } 3>&1)
+    [ -z "$st" ] || {
         rm -f "$tmp"
+        case "$st" in read*) die "cannot read $LIST" ;; esac
         die "cannot write $tmp"
     }
     # shellcheck disable=SC2046 # "lines bytes"
@@ -226,31 +306,91 @@ write_list() {
     }
 }
 
+# A Play-Detach that is a link is not the installer's folder: not used.
 backup_dir() {
-    if [ -d "$BACKUP_DIR" ]; then echo "$BACKUP_DIR"; else echo "$STORAGE/Download"; fi
+    if [ -d "$BACKUP_DIR" ] && [ ! -L "$BACKUP_DIR" ]; then echo "$BACKUP_DIR"; else echo "$STORAGE/Download"; fi
 }
 
 # Saves the current list to a file. Prints an error and returns 1 on failure.
+# Uses its own name for the file ($bfile): callers keep their $file.
 save_backup() {
-    file=$1
-    dir=$(dirname "$file")
+    bfile=$1
+    dir=$(dirname "$bfile")
     [ -d "$dir" ] || {
         echo "Error: folder not found: $dir" >&2
         return 1
     }
-    count=$(read_list | wc -l)
-    tmp="$file.tmp.$$"
-    {
-        echo "# Play Detach backup, $(date '+%Y-%m-%d %H:%M'), $count package(s)"
-        read_list
-    } >"$tmp" 2>/dev/null && mv -f "$tmp" "$file" || {
-        rm -f "$tmp"
-        echo "Error: cannot write $file" >&2
+    # A folder as the target would get the file moved into it and mode 664
+    [ ! -d "$bfile" ] || {
+        echo "Error: $bfile is a folder, give a file name" >&2
         return 1
     }
-    # Same owner as the folder, so file managers and apps can read it
-    chown "$(stat -c %u:%g "$dir")" "$file" 2>/dev/null
-    chmod 664 "$file"
+    count=$(read_list | wc -l)
+    # Root follows no link in shared storage: the file is written, owned
+    # and moded in a new root-only folder, then renamed in (mv -T replaces
+    # a link and never follows it), and not touched by name afterwards.
+    # The folder is used only from inside, after checking that it is still
+    # the one made here (its real path, root's): swapped for a link or for
+    # another folder, it is refused.
+    # A folder in the FUSE view of internal storage (/sdcard,
+    # /storage/self/primary, /storage/emulated/<n>, also reached through a
+    # link or a relative path) is taken to the real folder /data/media/<n>
+    # when that exists: FUSE shows the media provider as the owner of what
+    # root makes there, so the checks below would fail. Messages keep the
+    # path the user gave. The real path decides the user (<n>); the typed
+    # /sdcard and /storage/self/primary (user 0) only when it does not.
+    # (PD_FS_ROOT: a test folder standing for /)
+    r=${PD_FS_ROOT:-}
+    adir=$(cd -P "$dir" && pwd -P) || {
+        echo "Error: cannot write $bfile" >&2
+        return 1
+    }
+    rr=
+    [ -z "$r" ] || rr=$(cd -P "$r" && pwd -P)
+    m=
+    case "$adir/" in
+        "$rr/storage/self/primary/"*) m="$rr/data/media/0${adir#"$rr/storage/self/primary"}" ;;
+        "$rr/storage/emulated/"[0-9]*/*)
+            m=${adir#"$rr/storage/emulated/"}
+            case "${m%%/*}" in *[!0-9]*) m= ;; *) m="$rr/data/media/$m" ;; esac
+            ;;
+    esac
+    if [ -n "$m" ]; then
+        [ ! -d "$m" ] || adir=$m
+    else
+        case "$dir/" in
+            "$r/sdcard/"*) m="$r/data/media/0${dir#"$r/sdcard"}" ;;
+            "$r/storage/self/primary/"*) m="$r/data/media/0${dir#"$r/storage/self/primary"}" ;;
+        esac
+        [ -n "$m" ] && [ -d "$m" ] && adir=$(cd -P "$m" && pwd -P)
+    fi
+    # Named before mkdir: a signal during it is handled right after it
+    NEWSTAGE="$adir/.play-detach-backup.$$"
+    mkdir "$NEWSTAGE" 2>/dev/null || {
+        NEWSTAGE=
+        echo "Error: cannot write $bfile" >&2
+        return 1
+    }
+    STAGE=$NEWSTAGE
+    NEWSTAGE=
+    (
+        cd -P "$STAGE" && [ "$(pwd -P)" = "$STAGE" ] && [ -O . ] || exit 1
+        {
+            echo "# Play Detach backup, $(date '+%Y-%m-%d %H:%M'), $count package(s)"
+            read_list
+        } >backup 2>/dev/null && {
+            # Same owner as the folder, so file managers and apps can read it
+            chown "$(stat -c %u:%g "$adir")" backup 2>/dev/null
+            chmod 664 backup
+        } && mv -T -f backup "$adir/${bfile##*/}"
+    ) || {
+        rm -rf "$STAGE"
+        STAGE=
+        echo "Error: cannot write $bfile" >&2
+        return 1
+    }
+    rmdir "$STAGE"
+    STAGE=
 }
 
 # Keeps a copy of the list after every change. An empty list never replaces
@@ -258,6 +398,8 @@ save_backup() {
 auto_backup() {
     [ -f "$DATA_DIR/no-auto-backup" ] && return 0
     [ "$(read_list | wc -l)" -gt 0 ] || return 0
+    # nobody asked for this file: never through a linked folder
+    [ ! -L "$(backup_dir)" ] || return 0
     save_backup "$(backup_dir)/$AUTO_NAME" 2>/dev/null
     return 0
 }
@@ -349,7 +491,8 @@ read_status() {
         fi
         h=${res% *}
         a=${res#* }
-        echo "hook=$h api=$a at=$loaded" >"$HOOK_FILE.tmp.$$" && mv -f "$HOOK_FILE.tmp.$$" "$HOOK_FILE"
+        echo "hook=$h api=$a at=$loaded" >"$HOOK_FILE.tmp.$$" && mv -f "$HOOK_FILE.tmp.$$" "$HOOK_FILE" ||
+            rm -f "$HOOK_FILE.tmp.$$"
     fi
     hook=$h
     api=$a
@@ -391,27 +534,37 @@ scan_store() {
     fi
     [ "$store_code" = "$code" ] && [ "$store_name" = "$name" ] && return 0
     echo "code=$code name=${name:-?} changed=$changed" >"$STORE_FILE.tmp.$$" &&
-        mv -f "$STORE_FILE.tmp.$$" "$STORE_FILE"
+        mv -f "$STORE_FILE.tmp.$$" "$STORE_FILE" || rm -f "$STORE_FILE.tmp.$$"
 }
 
-# Prints "package installer" for every user app.
+# Prints "package installer" for every user app. Returns 1 when pm or sed
+# fail: a cut listing would make the missing apps look new at the next scan.
 user_apps() {
-    pm list packages -3 -i 2>/dev/null |
-        sed -n 's/^package:\([^[:space:]]*\)[[:space:]]*installer=\([^[:space:]]*\).*/\1 \2/p'
+    { ua=$({ { pm list packages -3 -i 2>/dev/null || echo pm >&3; } |
+        { sed -n 's/^package:\([^[:space:]]*\)[[:space:]]*installer=\([^[:space:]]*\).*/\1 \2/p' || echo sed >&3; } >&4; } 3>&1); } 4>&1
+    [ -z "$ua" ]
 }
 
 # Finds user apps that were not there at the last scan. With auto-detach on,
 # new sideloaded apps are detached. "scan_apps snapshot" only remembers the
 # current apps (used when auto-detach is turned on, so nothing old is touched).
 scan_apps() {
-    cur=$(user_apps)
+    cur=$(user_apps) || return 0 # pm failed, try next time
     [ -n "$cur" ] || return 0 # package manager not ready, try next time
+    # mksh keeps a here-document (lines_of) in a temporary file: when that
+    # cannot be written (full /data) it prints nothing, so every app would
+    # look new or removed. Nothing is done then.
+    lines_of "$cur" >/dev/null || return 1
     found=
     kept=
     n=0
     if [ "$1" != snapshot ] && [ -f "$SEEN" ] && [ -f "$AUTO_FLAG" ]; then
-        detached=$(read_list)
-        skip=" $RESTORERS $(tr '\n' ' ' 2>/dev/null <"$SKIP_FILE") "
+        detached=$(read_list) || return 1
+        # an auto-skip list that cannot be read must not let its installers
+        # through: the next scan tries again
+        extra=
+        [ ! -f "$SKIP_FILE" ] || extra=$(tr '\n' ' ' <"$SKIP_FILE") || return 1
+        skip=" $RESTORERS $extra "
         old_ifs=$IFS
         IFS='
 '
@@ -420,6 +573,11 @@ scan_apps() {
             inst=${line#* }
             valid_pkg "$pkg" || continue
             grep -qxF "$pkg" "$SEEN" && continue
+            # 1 = not seen; an error must not make every app look new
+            [ $? = 1 ] || {
+                IFS=$old_ifs
+                return 1
+            }
             case "$skip" in *" $inst "*) continue ;; esac
             n=$((n + 1))
             # Removed and installed again while still on the list: it stays
@@ -433,25 +591,37 @@ scan_apps() {
         IFS=$old_ifs
     fi
 
-    # Apps that were removed leave the automatic detach log
+    # Apps that were removed leave the automatic detach log. $cur has one
+    # "<package> <installer>" line per app: matched in the shell, so no
+    # failed command can make an installed app look removed.
     if [ -s "$AUTO_LOG" ] && [ -f "$SEEN" ]; then
-        names=$(lines_of "$cur" | cut -d' ' -f1)
         keep=$(while read -r ts what; do
             case "$what" in
                 skip\ *) echo "$ts $what" ;;
-                *) lines_of "$names" | grep -qxF "$what" && echo "$ts $what" ;;
+                *) case "
+$cur" in *"
+$what "*) echo "$ts $what" ;; esac ;;
             esac
         done <"$AUTO_LOG")
         if [ "$keep" != "$(cat "$AUTO_LOG")" ]; then
-            if [ -n "$keep" ]; then lines_of "$keep" >"$AUTO_LOG.tmp.$$"; else : >"$AUTO_LOG.tmp.$$"; fi
-            mv -f "$AUTO_LOG.tmp.$$" "$AUTO_LOG"
+            if [ -n "$keep" ]; then lines_of "$keep" >"$AUTO_LOG.tmp.$$"; else : >"$AUTO_LOG.tmp.$$"; fi &&
+                mv -f "$AUTO_LOG.tmp.$$" "$AUTO_LOG" || rm -f "$AUTO_LOG.tmp.$$"
         fi
     fi
 
     # Remember the current apps before acting, so a failure never repeats.
     # Written only when an app was installed or removed: the WebUI reads its
     # time to see that the app list changed.
-    lines_of "$cur" | cut -d' ' -f1 | sed '/^$/d' | sort -u >"$SEEN.tmp.$$"
+    # A failed write (full /data) must not replace the list: nothing is
+    # done until the current apps can be remembered. Every stage reports a
+    # failure (a later here-document can fail too, after the check above).
+    st=$({ { { lines_of "$cur" || echo lines >&3; } | { cut -d' ' -f1 || echo cut >&3; } |
+        { sed '/^$/d' || echo sed >&3; } | sort -u || echo sort >&3; } |
+        cat >"$SEEN.tmp.$$" || echo write >&3; } 3>&1)
+    [ -z "$st" ] || {
+        rm -f "$SEEN.tmp.$$"
+        return 1
+    }
     if cmp -s "$SEEN.tmp.$$" "$SEEN"; then
         rm -f "$SEEN.tmp.$$"
     else
@@ -471,7 +641,7 @@ scan_apps() {
         if [ -n "$found" ]; then
             list_lock
             # shellcheck disable=SC2086 # $found is a list of checked package names
-            { read_list; printf '%s\n' $found; } | write_list auto || return 1
+            printf '%s\n' $found | write_list auto merge || return 1
             auto_backup
             restart_store
         fi
@@ -501,7 +671,7 @@ scan_apps() {
     chmod 600 "$AUTO_LOG"
     # Keep the log short
     if [ "$(wc -l <"$AUTO_LOG")" -gt 30 ]; then
-        tail -n 30 "$AUTO_LOG" >"$AUTO_LOG.tmp.$$" && mv -f "$AUTO_LOG.tmp.$$" "$AUTO_LOG"
+        tail -n 30 "$AUTO_LOG" >"$AUTO_LOG.tmp.$$" && mv -f "$AUTO_LOG.tmp.$$" "$AUTO_LOG" || rm -f "$AUTO_LOG.tmp.$$"
     fi
 }
 
@@ -601,7 +771,7 @@ case "$cmd" in
         [ $# -gt 0 ] || die "no package given"
         check_pkgs "$@"
         list_lock
-        { read_list; printf '%s\n' "$@"; } | write_list user || exit 1
+        printf '%s\n' "$@" | write_list user merge || exit 1
         auto_backup
         restart_store
         for p in "$@"; do echo "Detached: $p"; done
@@ -610,11 +780,12 @@ case "$cmd" in
         [ $# -gt 0 ] || die "no package given"
         check_pkgs "$@"
         list_lock
-        current=$(read_list)
+        current=$(read_list) || exit 1
         for p in "$@"; do
             current=$(printf '%s\n' "$current" | grep -vxF "$p")
+            [ $? -lt 2 ] || die "cannot read $LIST" # 1 = no line left
         done
-        printf '%s\n' "$current" | sed '/^$/d' | write_list user || exit 1
+        { [ -z "$current" ] || printf '%s\n' "$current"; } | write_list user || exit 1
         auto_backup
         restart_store
         for p in "$@"; do echo "Re-attached: $p"; done
@@ -638,7 +809,7 @@ case "$cmd" in
         pkgs=$(read_pkg_file "$1") || exit 1
         [ -n "$pkgs" ] || die "no packages in $1"
         list_lock
-        { read_list; lines_of "$pkgs"; } | write_list import || exit 1
+        printf '%s\n' "$pkgs" | write_list import merge || exit 1
         auto_backup
         restart_store
         echo "Imported $(printf '%s\n' "$pkgs" | wc -l) package(s)"
@@ -698,7 +869,7 @@ case "$cmd" in
         [ -f "$file" ] || die "backup not found: $file"
         pkgs=$(read_pkg_file "$file") || exit 1
         list_lock
-        lines_of "$pkgs" | sed '/^$/d' | write_list restore || exit 1
+        { [ -z "$pkgs" ] || printf '%s\n' "$pkgs"; } | write_list restore || exit 1
         auto_backup
         restart_store
         echo "Restored $(read_list | wc -l) package(s) from $file"
@@ -737,18 +908,26 @@ case "$cmd" in
     history)
         n=${1:-20}
         case "$n" in '' | *[!0-9]*) die "use: history [count]" ;; esac
-        [ -f "$HISTORY" ] && tail -n "$n" "$HISTORY"
+        [ ! -f "$HISTORY" ] || tail -n "$n" "$HISTORY"
         ;;
     autoskip)
         case "$1" in
             add | remove)
                 [ -n "$2" ] && valid_pkg "$2" || die "invalid installer name: '$2'"
                 take_lock "$DATA_DIR/skip.lock" 50 30 || die "busy, try again"
-                {
-                    cat "$SKIP_FILE" 2>/dev/null
+                # a failed stage is reported on fd 3 (the next one cannot see
+                # it); grep's 1 (no line left) is a legal result
+                st=$({ {
+                    [ ! -f "$SKIP_FILE" ] || cat "$SKIP_FILE" || echo read >&3
                     [ "$1" = add ] && echo "$2"
-                } | sed '/^$/d' | sort -u | { if [ "$1" = remove ]; then grep -vxF "$2"; else cat; fi; } >"$SKIP_FILE.tmp.$$"
-                mv -f "$SKIP_FILE.tmp.$$" "$SKIP_FILE" || die "cannot write $SKIP_FILE"
+                } | { sed '/^$/d' || echo sed >&3; } | { sort -u || echo sort >&3; } |
+                    { if [ "$1" = remove ]; then grep -vxF "$2"; [ $? -lt 2 ] || echo grep >&3; else cat; fi; } |
+                    cat >"$SKIP_FILE.tmp.$$" || echo write >&3; } 3>&1)
+                [ -z "$st" ] && mv -f "$SKIP_FILE.tmp.$$" "$SKIP_FILE" || {
+                    # cat reports a failed write (busybox grep does not)
+                    rm -f "$SKIP_FILE.tmp.$$"
+                    die "cannot write $SKIP_FILE"
+                }
                 ;;
             '' | list) ;;
             *) die "use: autoskip [add|remove <installer>]" ;;

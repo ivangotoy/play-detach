@@ -650,7 +650,7 @@ const AUTO_NAME = "play-detach-auto.txt";
 // The Play-Detach folder the installer creates; Download if it was deleted.
 async function startDir() {
   const res = await exec(
-    `for d in ${sq(BACKUP_DIR)} ${sq(STORAGE + "/Download")}; do [ -d "$d" ] && { echo "$d"; break; }; done`
+    `for d in ${sq(BACKUP_DIR)} ${sq(STORAGE + "/Download")}; do [ -d "$d" ] && [ ! -L "$d" ] && { echo "$d"; break; }; done`
   );
   const d = res.stdout.trim();
   return d.startsWith(STORAGE) ? d : STORAGE;
