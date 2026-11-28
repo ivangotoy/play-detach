@@ -59,7 +59,7 @@ su -c '/data/adb/modules/play-detach/play-detach help'
 
 列表保存在 `/data/adb/play-detach/detach.list`，每行一个包名。每次 Play 商店启动时，模块都会用时间覆盖同一文件夹下的单行 `status` 文件（自检结果保存在它旁边的 `hook` 文件中），`play-detach status` 和 WebUI 便据此显示当前列表是否已经生效。
 
-一个很小的后台脚本（`service.sh`）会休眠等待 Linux inotify 事件（busybox 或 toybox 的 `inotifyd`，没有时退化为每 3 秒检查一次），用来感知新应用和 Play 商店更新，因此在没有任何变化时它完全不工作。开启 `autodetach on` 后，从 Play 商店之外安装的新应用会立即被分离；由备份应用恢复的应用则不受影响。
+一个很小的后台脚本（`service.sh`）会休眠等待 Linux inotify 事件（busybox 或 toybox 的 `inotifyd`，没有它或它反复启动后立即退出时，退化为每 3 秒检查一次），用来感知新应用和 Play 商店更新，因此在没有任何变化时它完全不工作。开启 `autodetach on` 后，从 Play 商店之外安装的新应用会立即被分离；由备份应用恢复的应用则不受影响。
 
 备份保存在 `/sdcard/Play-Detach`，该文件夹由安装脚本创建（如果它被删除了，则改为 `Download`）。每次更改后，列表还会以 `play-detach-auto.txt` 的形式保存到那里。
 

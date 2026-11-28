@@ -11,11 +11,12 @@
 #   - the Play Store started (the module rewrote its status file): then
 #     "play-detach check" notifies if the module could not start in it
 # A full scan also runs once an hour in case a change was missed. Without
-# inotifyd (busybox or toybox) it falls back to a check every 3 seconds.
+# inotifyd (busybox or toybox), or when it keeps ending at once, it falls
+# back to a check every 3 seconds.
 
 MODDIR=${0%/*}
 CLI="$MODDIR/play-detach"
-DATA=/data/adb/play-detach
+DATA=${PD_DATA_DIR:-/data/adb/play-detach}
 STATUS="$DATA/status"
 FIFO="$DATA/events.fifo"
 SAFETY=3600 # seconds between full scans
@@ -63,7 +64,8 @@ watch_events() {
         mkfifo -m 600 "$FIFO" 2>/dev/null || return 2
     fi
     # Read-write open: never blocks and never sees end of file
-    exec 3<>"$FIFO" || return 2
+    # (command: a failed redirection returns here instead of ending the shell)
+    command exec 3<>"$FIFO" || return 2
     # shellcheck disable=SC2086 # $INOTIFYD is "<binary> inotifyd"
     $INOTIFYD - /data/app:nmdy "$DATA:y" >&3 2>/dev/null &
     ipid=$!
@@ -131,7 +133,7 @@ watch_events() {
     return 1
 }
 
-# Old way, only when no inotifyd exists
+# Old way: no inotifyd, no event pipe, or an inotifyd that keeps ending
 poll_loop() {
     last_app=
     last_status=
@@ -166,10 +168,19 @@ poll_loop() {
     mkdir -p "$DATA"
     first_delay=30
     if INOTIFYD=$(find_inotifyd); then
+        quick=0
         while :; do
+            uptime_s
+            began=$now
             watch_events
             case $? in
-                0) sleep 5 ;; # inotifyd ended: start it again
+                0) # inotifyd ended: start it again. An inotifyd that keeps
+                    # ending within a minute is only noticed on a timer and
+                    # never lets a scan run, so after 3 such runs: poll_loop.
+                    uptime_s
+                    if [ $((now - began)) -lt 60 ]; then quick=$((quick + 1)); else quick=0; fi
+                    [ "$quick" -lt 3 ] || { poll_loop; break; }
+                    sleep 5 ;;
                 2) poll_loop; break ;;
                 *) break ;;   # module removed
             esac
