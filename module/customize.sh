@@ -2,8 +2,8 @@
 # Play Detach - installer
 # Copyright 2026 Tears Burn (nikakvo). Licensed under the Apache License 2.0.
 
-DATA_DIR=/data/adb/play-detach
-TERMUX_BIN=/data/data/com.termux/files/usr/bin
+DATA_DIR=${PD_DATA_DIR:-/data/adb/play-detach}
+TERMUX_BIN=${PD_TERMUX_BIN:-/data/data/com.termux/files/usr/bin}
 
 # Language of the messages: the one chosen in the WebUI (EN / RU / ZH switch),
 # otherwise the phone's language. Russian translation based on the work of
@@ -136,17 +136,27 @@ fi
 # Own folder for backups in internal storage (/sdcard/Play-Detach), with the
 # same owner, mode and SELinux label as Download so file managers can open it.
 # If the user deletes it later, backups go to Download instead.
-STORAGE=/data/media/0
+STORAGE=${PD_STORAGE:-/data/media/0}
 if [ -d "$STORAGE/Download" ]; then
     BDIR="$STORAGE/Play-Detach"
-    if [ ! -d "$BDIR" ] && mkdir "$BDIR" 2>/dev/null; then
-        chown "$(stat -c %u:%g "$STORAGE/Download")" "$BDIR" 2>/dev/null
-        chmod "$(stat -c %a "$STORAGE/Download")" "$BDIR" 2>/dev/null
-        ctx=$(stat -c %C "$STORAGE/Download" 2>/dev/null) && [ -n "$ctx" ] && chcon "$ctx" "$BDIR" 2>/dev/null
-        ui_print "$(m "- Backup folder created: Play-Detach" "- Создана папка для бэкапов: Play-Detach" "- 已创建备份文件夹：Play-Detach")"
+    # Root follows no link in shared storage: the folder is made, owned,
+    # moded and labelled in a new root-only folder, used only from inside
+    # after checking it is still the one made here, then renamed in.
+    stage="$STORAGE/.play-detach-folder.$$"
+    if [ ! -d "$BDIR" ] && mkdir -m 700 "$stage" 2>/dev/null; then
+        (
+            cd -P "$stage" && [ "$(pwd -P)" = "$(cd -P "$STORAGE" && pwd -P)/${stage##*/}" ] &&
+                [ -O . ] && [ "$(stat -c %a .)" = 700 ] && mkdir Play-Detach 2>/dev/null || exit 1
+            chown "$(stat -c %u:%g "$STORAGE/Download")" Play-Detach 2>/dev/null
+            chmod "$(stat -c %a "$STORAGE/Download")" Play-Detach 2>/dev/null
+            ctx=$(stat -c %C "$STORAGE/Download" 2>/dev/null) && [ -n "$ctx" ] && chcon "$ctx" Play-Detach 2>/dev/null
+            mv -T Play-Detach "$BDIR" 2>/dev/null
+        ) &&
+            ui_print "$(m "- Backup folder created: Play-Detach" "- Создана папка для бэкапов: Play-Detach" "- 已创建备份文件夹：Play-Detach")"
+        rm -rf "$stage"
     fi
     # First automatic backup of an existing list
-    if [ -d "$BDIR" ] && [ -s "$DATA_DIR/detach.list" ] && [ ! -f "$DATA_DIR/no-auto-backup" ]; then
+    if [ -d "$BDIR" ] && [ ! -L "$BDIR" ] && [ -s "$DATA_DIR/detach.list" ] && [ ! -f "$DATA_DIR/no-auto-backup" ]; then
         "$MODPATH/play-detach" backup "$BDIR/play-detach-auto.txt" >/dev/null 2>&1 &&
             ui_print "$(m "- Detached apps saved to Play-Detach/play-detach-auto.txt" "- Откреплённые приложения сохранены в Play-Detach/play-detach-auto.txt" "- 已分离的应用已保存到 Play-Detach/play-detach-auto.txt")"
     fi
@@ -160,12 +170,34 @@ fi
 
 if [ -d "$TERMUX_BIN" ]; then
     owner=$(stat -c %u:%g "$TERMUX_BIN")
-    cat >"$TERMUX_BIN/play-detach" <<'EOF'
+    # Termux owns this folder: root follows no link there and touches only
+    # names in a folder of its own. The command is made in a root-only
+    # staging folder inside it (so it gets the folder's SELinux label and
+    # encryption policy), then renamed in (mv -T replaces a link and never
+    # follows it). A link among the last three folders (files/usr/bin)
+    # would put it elsewhere: then it is not installed.
+    top=${TERMUX_BIN%/*/*/*}
+    (
+        cd -P "$TERMUX_BIN" && [ "$(pwd -P)" = "$(cd -P "$top" && pwd -P)/${TERMUX_BIN#"$top"/}" ] || exit 1
+        bin=$(pwd -P)
+        stage=.play-detach-install.$$
+        umask 077
+        mkdir "$stage" || exit 1
+        rc=1
+        if cd -P "$stage" && [ "$(pwd -P)" = "$bin/$stage" ] && [ -O . ] && [ "$(stat -c %a .)" = 700 ]; then
+            cat >play-detach <<'EOF' &&
 #!/data/data/com.termux/files/usr/bin/sh
 exec su -c /data/adb/modules/play-detach/play-detach "$@"
 EOF
-    chown "$owner" "$TERMUX_BIN/play-detach"
-    chmod 755 "$TERMUX_BIN/play-detach"
+                chown "$owner" play-detach && chmod 755 play-detach &&
+                rm -f ../play-detach && mv -T -f play-detach ../play-detach
+            rc=$?
+            rm -f play-detach
+            cd -P ..
+        fi
+        rmdir "$stage" 2>/dev/null
+        exit $rc
+    ) &&
     ui_print "$(m "- Termux command installed: play-detach" "- В Termux установлена команда play-detach" "- 已在 Termux 中安装命令：play-detach")"
 fi
 
