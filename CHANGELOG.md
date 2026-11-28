@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- The list of detached apps, the auto-skip list and the list of apps the scan remembers are kept when a step of a change fails (for example a full storage), and the command reports the error instead of success
+- Backups in internal storage follow no link: they are written in a private folder first and then moved in place. A Play-Detach folder that is a link is not used; backups go to Download instead
+- A backup path given as /sdcard/... (also a relative path, or Termux's ~/storage/shared) is written in the real internal storage folder, so it is not refused
+- The scan does nothing when the package manager fails, so apps it did not list are not taken for new ones
+- A command ended early (Ctrl-C, a signal) removes its temporary files and locks and reports a failure
+- The installer never follows a link when it installs the Termux command or makes the backup folder
+- The background check falls back to the 3 s check when inotifyd keeps ending at once
+- The Zygisk status temporary file is removed when its rename fails
+- New dependency-free test suite: sh tests/run.sh
+
 ## v1.5.0
 
 - New: Simplified Chinese, translated by gander2388. It covers the WebUI, the help page, the installer, the notifications and the module description
